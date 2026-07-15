@@ -20,6 +20,7 @@ function include(filename) {
 
 function initializeSpreadsheetStructure() {
   Object.keys(SHEET_NAMES).forEach(key => getOrCreateSheet_(SHEET_NAMES[key]));
+  getOrCreateStaffingConfigSheet_(); // 必要人数設定に既定値(資格保有者/非保有者)を投入
   return { success: true };
 }
 
@@ -40,6 +41,10 @@ function apiGetConstraintTable(weekStartStr) {
 }
 
 /* ---------- Step2: シフト生成 ---------- */
+
+// 必要人数設定(曜日×シフト区分ごとの資格保有者/資格非保有者人数)は
+// StaffingConfigService.gs の apiGetStaffingConfig / apiUpdateStaffingConfig を
+// google.script.run から直接呼び出す。
 
 function apiGenerateDraftShift(weekStartStr) {
   return generateDraftShift(weekStartStr);

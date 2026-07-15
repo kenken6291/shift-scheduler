@@ -13,11 +13,14 @@
     document.getElementById('generateShiftBtn').addEventListener('click', onGenerateShift);
     document.getElementById('confirmShiftBtn').addEventListener('click', onConfirmShift);
     document.getElementById('runValidationBtn').addEventListener('click', onRunValidation);
+    document.getElementById('saveStaffingConfigBtn').addEventListener('click', onSaveStaffingConfig);
 
     google.script.run.withSuccessHandler(employees => {
       currentEmployees = employees;
       renderEmployeeSelect(employees);
     }).apiGetEmployees();
+
+    loadStaffingConfig();
   });
 
   function setupTabs() {
@@ -129,7 +132,61 @@
     container.innerHTML = html;
   }
 
-  /* ---------- Step2 ---------- */
+  /* ---------- Step2: 必要人数設定 ---------- */
+
+  function loadStaffingConfig() {
+    const container = document.getElementById('staffingConfigContainer');
+    container.innerHTML = '読み込み中...';
+    google.script.run.withSuccessHandler(renderStaffingConfig).apiGetStaffingConfig();
+  }
+
+  function renderStaffingConfig(rows) {
+    const container = document.getElementById('staffingConfigContainer');
+    let html = '<table><thead><tr><th>曜日</th><th>シフト</th><th>資格保有者人数</th><th>資格非保有者人数</th><th>合計</th></tr></thead><tbody>';
+    rows.forEach((r, i) => {
+      const manager = r['資格保有者人数'];
+      const nonManager = r['資格非保有者人数'];
+      html += `<tr data-day="${r['曜日']}" data-shift="${r['シフト区分']}">
+        <td>${r['曜日']}</td>
+        <td>${r['シフト区分']}</td>
+        <td><input type="number" min="0" class="staffing-input mgr-input" value="${manager}"></td>
+        <td><input type="number" min="0" class="staffing-input nonmgr-input" value="${nonManager}"></td>
+        <td class="staffing-total">${Number(manager) + Number(nonManager)}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // 入力変更のたびに合計列を再計算
+    container.querySelectorAll('tr[data-day]').forEach(tr => {
+      const mgrInput = tr.querySelector('.mgr-input');
+      const nonMgrInput = tr.querySelector('.nonmgr-input');
+      const totalCell = tr.querySelector('.staffing-total');
+      const recalc = () => {
+        totalCell.textContent = (Number(mgrInput.value) || 0) + (Number(nonMgrInput.value) || 0);
+      };
+      mgrInput.addEventListener('input', recalc);
+      nonMgrInput.addEventListener('input', recalc);
+    });
+  }
+
+  function onSaveStaffingConfig() {
+    const container = document.getElementById('staffingConfigContainer');
+    const payload = Array.from(container.querySelectorAll('tr[data-day]')).map(tr => ({
+      day: tr.dataset.day,
+      shiftType: tr.dataset.shift,
+      manager: tr.querySelector('.mgr-input').value,
+      nonManager: tr.querySelector('.nonmgr-input').value
+    }));
+    const msg = document.getElementById('staffingConfigMsg');
+    msg.textContent = '保存中...';
+    google.script.run.withSuccessHandler(() => {
+      msg.textContent = '保存しました。次回のシフト生成・違反チェックから反映されます。';
+    }).withFailureHandler(err => { msg.textContent = 'エラー: ' + err.message; })
+      .apiUpdateStaffingConfig(payload);
+  }
+
+  /* ---------- Step2: シフト生成 ---------- */
 
   function onGenerateShift() {
     const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
@@ -154,7 +211,7 @@
     if (!shortfalls || shortfalls.length === 0) { box.style.display = 'none'; return; }
     box.style.display = 'block';
     box.textContent = '人数が不足している枠があります:\n' +
-      shortfalls.map(s => `・${s.date} ${s.shiftType}: 必要${s.need}名 / 割当${s.actual}名`).join('\n');
+      shortfalls.map(s => `・${s.date} ${s.shiftType} [${s.category}]: 必要${s.need}名 / 割当${s.actual}名`).join('\n');
   }
 
   function renderShiftGrid(grid) {
@@ -167,9 +224,20 @@
     ['早番', '遅番'].forEach(shiftType => {
       html += `<tr><td>${shiftType}</td>`;
       dates.forEach(d => {
-        const people = grid[d][shiftType] || [];
+        const cell = grid[d][shiftType] || { people: [], required: { manager: 0, nonManager: 0, total: 0 }, actual: { manager: 0, nonManager: 0, total: 0 } };
+        const people = cell.people || [];
         const list = people.map(p => `<div class="shift-person${p.isManager ? ' manager' : ''}">${p.name}</div>`).join('');
-        html += `<td><div class="shift-cell-list">${list || '-'}</div></td>`;
+        const req = cell.required || { manager: 0, nonManager: 0, total: 0 };
+        const act = cell.actual || { manager: 0, nonManager: 0, total: 0 };
+        const mgrClass = act.manager < req.manager ? 'count-short' : 'count-ok';
+        const nonMgrClass = act.nonManager < req.nonManager ? 'count-short' : 'count-ok';
+        const summary = `
+          <div class="shift-count-summary">
+            <div class="${mgrClass}">資格保有者 ${act.manager}/${req.manager}名</div>
+            <div class="${nonMgrClass}">資格非保有者 ${act.nonManager}/${req.nonManager}名</div>
+            <div>合計 ${act.total}/${req.total}名</div>
+          </div>`;
+        html += `<td><div class="shift-cell-list">${list || '-'}</div>${summary}</td>`;
       });
       html += '</tr>';
     });

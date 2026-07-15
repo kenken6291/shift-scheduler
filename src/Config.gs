@@ -8,7 +8,8 @@ const SHEET_NAMES = {
   REQUEST: '希望シフト',
   CONSTRAINT: '制約表',
   RESULT: '完成シフト',
-  VIOLATION: '違反ログ'
+  VIOLATION: '違反ログ',
+  STAFFING_CONFIG: '必要人数設定'
 };
 
 const SHEET_HEADERS = {
@@ -16,7 +17,8 @@ const SHEET_HEADERS = {
   REQUEST: ['希望ID', 'EmployeeID', '週開始日', '日付', '希望区分', '備考', '提出日時'],
   CONSTRAINT: ['週開始日', 'EmployeeID', '氏名', '月', '火', '水', '木', '金', '土', '日'],
   RESULT: ['週開始日', '日付', '曜日', 'シフト区分', 'EmployeeID', '氏名', '責任者フラグ', 'ステータス'],
-  VIOLATION: ['週開始日', 'チェック日時', '違反種別', '対象日', '対象シフト', 'EmployeeID', '氏名', '詳細', '深刻度']
+  VIOLATION: ['週開始日', 'チェック日時', '違反種別', '対象日', '対象シフト', 'EmployeeID', '氏名', '詳細', '深刻度'],
+  STAFFING_CONFIG: ['曜日', 'シフト区分', '資格保有者人数', '資格非保有者人数', '合計人数']
 };
 
 const SHIFT_TYPES = {
@@ -31,11 +33,29 @@ const SHIFT_TIME_LABEL = {
 
 const WEEKDAY_JP = ['月', '火', '水', '木', '金', '土', '日'];
 
-// 平日/週末ごとの必要人数
-const REQUIRED_STAFF = {
-  weekday: { '早番': 3, '遅番': 3 },
-  weekend: { '早番': 4, '遅番': 4 }
-};
+/**
+ * 「必要人数設定」シートの既定値（初回のみ自動投入）。
+ * 曜日×シフト区分ごとに 資格保有者人数 / 資格非保有者人数 を個別指定する。
+ * 従来の「平日3名(責任者1+一般2)・土日4名(責任者1+一般3)」を初期値として踏襲。
+ */
+function getDefaultStaffingConfig_() {
+  const rows = [];
+  WEEKDAY_JP.forEach(day => {
+    const weekend = (day === '土' || day === '日');
+    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
+      const manager = 1;
+      const nonManager = weekend ? 3 : 2;
+      rows.push({
+        '曜日': day,
+        'シフト区分': shiftType,
+        '資格保有者人数': manager,
+        '資格非保有者人数': nonManager,
+        '合計人数': manager + nonManager
+      });
+    });
+  });
+  return rows;
+}
 
 // 希望区分の意味
 const REQUEST_TYPE = {

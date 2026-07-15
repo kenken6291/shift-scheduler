@@ -29,10 +29,11 @@ function generateDraftShift(weekStartStr) {
   });
 
   const carryOver = getCarryOverState_(weekStartDate, employees);
+  const staffingRequirements = getStaffingRequirements(); // { "曜日_シフト区分": {manager, nonManager, total} }
 
   let best = null;
   for (let trial = 0; trial < RULES.GENERATION_TRIALS; trial++) {
-    const result = runOneTrial_(employees, dayList, requestByEmpAndDate, carryOver, trial);
+    const result = runOneTrial_(employees, dayList, requestByEmpAndDate, carryOver, staffingRequirements, trial);
     if (best === null || result.score > best.score) {
       best = result;
     }
@@ -67,7 +68,7 @@ function generateDraftShift(weekStartStr) {
   return {
     weekStart: weekStartStr,
     shortfalls: best.shortfalls,
-    grid: buildGridFromRows_(dayList, resultRows)
+    grid: buildGridFromRows_(dayList, resultRows, staffingRequirements)
   };
 }
 
@@ -110,7 +111,7 @@ function getCarryOverState_(weekStartDate, employees) {
   return state;
 }
 
-function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, trialSeed) {
+function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, staffingRequirements, trialSeed) {
   const weeklyCount = {};
   const streak = {};
   const lastWorkedDate = {};
@@ -129,15 +130,13 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, tr
 
   dayList.forEach(d => {
     assignments[d.date] = { '早番': [], '遅番': [] };
-    const weekend = isWeekend_(d.dateObj);
-    const need = weekend ? REQUIRED_STAFF.weekend : REQUIRED_STAFF.weekday;
 
     // 早番を先に確定させる（遅番翌日早番禁止のルールに必要な順序）
     [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
-      const requiredCount = need[shiftType];
+      const need = staffingRequirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0 };
       const alreadyAssignedToday = assignments[d.date][SHIFT_TYPES.EARLY].concat(assignments[d.date][SHIFT_TYPES.LATE]);
 
-      let candidates = employees.filter(e => {
+      const baseCandidates = employees.filter(e => {
         const empId = e['EmployeeID'];
         if (alreadyAssignedToday.indexOf(empId) !== -1) return false; // 同日二重割当禁止
         if (weeklyCount[empId] >= RULES.MAX_WORK_DAYS_PER_WEEK) return false;
@@ -156,8 +155,7 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, tr
         return true;
       });
 
-      // スコアリング: 希望一致 > 割当回数少ない人優先(公平性) > ランダム性(試行多様化)
-      candidates = candidates.map(e => {
+      const scored = e => {
         const empId = e['EmployeeID'];
         const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
         let pref = 0;
@@ -165,29 +163,36 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, tr
         if (shiftType === SHIFT_TYPES.LATE && reqType === REQUEST_TYPE.PREFER_LATE) pref = 2;
         const fairness = -weeklyCount[empId]; // 割当が少ないほど高スコア
         const jitter = pseudoRandom_(trialSeed, empId, d.date, shiftType);
-        return { emp: e, sortScore: pref * 10 + fairness + jitter };
-      }).sort((a, b) => b.sortScore - a.sortScore).map(x => x.emp);
+        return pref * 10 + fairness + jitter;
+      };
+      const sortByScore = list => list
+        .map(e => ({ emp: e, sortScore: scored(e) }))
+        .sort((a, b) => b.sortScore - a.sortScore)
+        .map(x => x.emp);
 
-      // 責任者を最低1名確保
-      const managerCandidates = candidates.filter(isManager_);
-      const chosen = [];
-      if (managerCandidates.length > 0) {
-        chosen.push(managerCandidates[0]);
-      } else {
-        score -= 50; // 責任者不在ペナルティ（後でValidationでも検出される）
+      // 資格保有者枠・資格非保有者枠を別々に埋める
+      const managerPool = sortByScore(baseCandidates.filter(isManager_));
+      const nonManagerPool = sortByScore(baseCandidates.filter(e => !isManager_(e)));
+
+      const chosenManagers = managerPool.slice(0, need.manager);
+      const chosenNonManagers = nonManagerPool.slice(0, need.nonManager);
+
+      if (chosenManagers.length < need.manager) {
+        shortfalls.push({
+          date: d.date, shiftType: shiftType, category: '資格保有者',
+          need: need.manager, actual: chosenManagers.length
+        });
+        score -= (need.manager - chosenManagers.length) * 100;
       }
-      candidates.forEach(e => {
-        if (chosen.length >= requiredCount) return;
-        if (chosen.indexOf(e) !== -1) return;
-        chosen.push(e);
-      });
-
-      if (chosen.length < requiredCount) {
-        shortfalls.push({ date: d.date, shiftType: shiftType, need: requiredCount, actual: chosen.length });
-        score -= (requiredCount - chosen.length) * 100;
+      if (chosenNonManagers.length < need.nonManager) {
+        shortfalls.push({
+          date: d.date, shiftType: shiftType, category: '資格非保有者',
+          need: need.nonManager, actual: chosenNonManagers.length
+        });
+        score -= (need.nonManager - chosenNonManagers.length) * 100;
       }
 
-      chosen.forEach(e => {
+      chosenManagers.concat(chosenNonManagers).forEach(e => {
         const empId = e['EmployeeID'];
         assignments[d.date][shiftType].push(empId);
         weeklyCount[empId] += 1;
@@ -213,17 +218,31 @@ function pseudoRandom_(seed, empId, dateStr, shiftType) {
   return (hash % 100) / 100; // 0〜1未満のジッター
 }
 
-function buildGridFromRows_(dayList, rows) {
+function buildGridFromRows_(dayList, rows, staffingRequirements) {
+  const requirements = staffingRequirements || getStaffingRequirements();
   const grid = {};
   dayList.forEach(d => {
-    grid[d.date] = { label: d.label, '早番': [], '遅番': [] };
+    grid[d.date] = {
+      label: d.label,
+      '早番': { people: [], required: requirements[d.label + '_' + SHIFT_TYPES.EARLY] || { manager: 0, nonManager: 0, total: 0 } },
+      '遅番': { people: [], required: requirements[d.label + '_' + SHIFT_TYPES.LATE] || { manager: 0, nonManager: 0, total: 0 } }
+    };
   });
   rows.forEach(r => {
     if (!grid[r['日付']]) return;
-    grid[r['日付']][r['シフト区分']].push({
+    grid[r['日付']][r['シフト区分']].people.push({
       employeeId: r['EmployeeID'],
       name: r['氏名'],
       isManager: r['責任者フラグ'] === '○'
+    });
+  });
+  // 実際の人数集計（資格保有者/資格非保有者/合計）を付与
+  Object.keys(grid).forEach(date => {
+    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
+      const cell = grid[date][shiftType];
+      const managerCount = cell.people.filter(p => p.isManager).length;
+      const nonManagerCount = cell.people.length - managerCount;
+      cell.actual = { manager: managerCount, nonManager: nonManagerCount, total: cell.people.length };
     });
   });
   return grid;
@@ -236,7 +255,8 @@ function getShiftResult(weekStartStr) {
     const w = r['週開始日'] instanceof Date ? formatDate_(r['週開始日']) : String(r['週開始日']);
     return w === weekStartStr;
   });
-  return { weekStart: weekStartStr, grid: buildGridFromRows_(dayList, rows), rowCount: rows.length };
+  const staffingRequirements = getStaffingRequirements();
+  return { weekStart: weekStartStr, grid: buildGridFromRows_(dayList, rows, staffingRequirements), rowCount: rows.length };
 }
 
 function confirmShift(weekStartStr) {
