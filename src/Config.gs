@@ -23,13 +23,25 @@ const SHEET_HEADERS = {
 
 const SHIFT_TYPES = {
   EARLY: '早番',
-  LATE: '遅番'
+  LATE: '遅番',
+  FULL_DAY: '1日'
 };
+
+const ALL_SHIFT_TYPES = [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE, SHIFT_TYPES.FULL_DAY];
 
 const SHIFT_TIME_LABEL = {
   '早番': '9:00〜17:00',
-  '遅番': '13:00〜21:00'
+  '遅番': '13:00〜21:00',
+  '1日': '9:00〜21:00（早番+遅番の通し勤務）'
 };
+
+/**
+ * シフト1回あたりの「出勤回数」への重み。
+ * 「1日」は早番+遅番の通し勤務のため2回分としてカウントする。
+ */
+function getShiftWeight_(shiftType) {
+  return shiftType === SHIFT_TYPES.FULL_DAY ? 2 : 1;
+}
 
 const WEEKDAY_JP = ['月', '火', '水', '木', '金', '土', '日'];
 
@@ -42,9 +54,14 @@ function getDefaultStaffingConfig_() {
   const rows = [];
   WEEKDAY_JP.forEach(day => {
     const weekend = (day === '土' || day === '日');
-    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
-      const manager = 1;
-      const nonManager = weekend ? 3 : 2;
+    ALL_SHIFT_TYPES.forEach(shiftType => {
+      let manager = 1;
+      let nonManager = weekend ? 3 : 2;
+      if (shiftType === SHIFT_TYPES.FULL_DAY) {
+        // 「1日」は通常運用では任意（必要な週だけ管理者が人数を設定する想定）のため既定0名
+        manager = 0;
+        nonManager = 0;
+      }
       rows.push({
         '曜日': day,
         'シフト区分': shiftType,
@@ -68,7 +85,7 @@ const REQUEST_TYPE = {
 };
 
 const RULES = {
-  MAX_WORK_DAYS_PER_WEEK: 5, // 「上限回数」列が未設定の従業員に適用する既定値
+  MAX_WORK_DAYS_PER_WEEK: 10, // 「上限回数」列が未設定の従業員に適用する既定値（「1日」は2回分カウントのため引き上げ）
   MAX_CONSECUTIVE_DAYS: 5,
   GENERATION_TRIALS: 20 // 複数試行してベストなシフトを採用する
 };

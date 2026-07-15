@@ -281,11 +281,11 @@
   function renderEmployeeSummary(summary) {
     const container = document.getElementById('employeeSummaryContainer');
     if (!summary || summary.length === 0) { container.innerHTML = '<p>データがありません</p>'; return; }
-    let html = '<table><thead><tr><th>氏名</th><th>早番</th><th>遅番</th><th>合計</th><th>上限</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>氏名</th><th>早番</th><th>遅番</th><th>1日</th><th>合計</th><th>上限</th></tr></thead><tbody>';
     summary.forEach(s => {
       const nameLabel = s.name + (s.isManager ? ' ★' : '');
       const totalClass = s.overLimit ? 'count-short' : 'count-ok';
-      html += `<tr><td>${nameLabel}</td><td>${s.early}</td><td>${s.late}</td><td class="${totalClass}"><strong>${s.total}</strong></td><td>${s.limit}</td></tr>`;
+      html += `<tr><td>${nameLabel}</td><td>${s.early}</td><td>${s.late}</td><td>${s.fullDay}</td><td class="${totalClass}"><strong>${s.total}</strong></td><td>${s.limit}</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -306,7 +306,7 @@
     let html = '<table><thead><tr><th>区分</th>';
     dates.forEach(d => { html += `<th>${grid[d].label}<br>${d}</th>`; });
     html += '</tr></thead><tbody>';
-    ['早番', '遅番'].forEach(shiftType => {
+    ['早番', '遅番', '1日'].forEach(shiftType => {
       html += `<tr><td>${shiftType}</td>`;
       dates.forEach(d => {
         const cell = grid[d][shiftType] || { people: [], required: { manager: 0, nonManager: 0, total: 0 }, actual: { manager: 0, nonManager: 0, total: 0 } };

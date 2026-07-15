@@ -46,7 +46,7 @@ function generateDraftShift(weekStartStr) {
 
   const resultRows = [];
   dayList.forEach(d => {
-    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
+    ALL_SHIFT_TYPES.forEach(shiftType => {
       const assigned = best.assignments[d.date][shiftType] || [];
       assigned.forEach(empId => {
         const emp = empMap[empId];
@@ -132,17 +132,18 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
   let score = 0;
 
   dayList.forEach(d => {
-    assignments[d.date] = { '早番': [], '遅番': [] };
+    assignments[d.date] = { '早番': [], '遅番': [], '1日': [] };
 
-    // 早番を先に確定させる（遅番翌日早番禁止のルールに必要な順序）
-    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
+    // 早番→遅番→1日の順で確定させる（遅番/1日の翌日早番禁止ルールに必要な順序）
+    ALL_SHIFT_TYPES.forEach(shiftType => {
       const need = staffingRequirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0 };
-      const alreadyAssignedToday = assignments[d.date][SHIFT_TYPES.EARLY].concat(assignments[d.date][SHIFT_TYPES.LATE]);
+      const shiftWeight = getShiftWeight_(shiftType);
+      const alreadyAssignedToday = ALL_SHIFT_TYPES.reduce((acc, t) => acc.concat(assignments[d.date][t]), []);
 
       const baseCandidates = employees.filter(e => {
         const empId = e['EmployeeID'];
-        if (alreadyAssignedToday.indexOf(empId) !== -1) return false; // 同日二重割当禁止
-        if (weeklyCount[empId] >= weeklyLimit[empId]) return false;
+        if (alreadyAssignedToday.indexOf(empId) !== -1) return false; // 同日二重割当禁止（1日勤務との重複も含む）
+        if (weeklyCount[empId] + shiftWeight > weeklyLimit[empId]) return false; // 「1日」は2回分として判定
         if (streak[empId] >= RULES.MAX_CONSECUTIVE_DAYS) return false; // 既に上限連勤
 
         const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
@@ -150,10 +151,13 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         if (reqType === REQUEST_TYPE.EARLY_ONLY && shiftType !== SHIFT_TYPES.EARLY) return false;
         if (reqType === REQUEST_TYPE.LATE_ONLY && shiftType !== SHIFT_TYPES.LATE) return false;
 
-        // 遅番の翌日に早番を配置しない
+        // 前日が遅番、または「1日」(通し勤務＝遅番相当で終業)の場合は早番を配置しない
         if (shiftType === SHIFT_TYPES.EARLY) {
           const yesterday = formatDate_(addDays_(d.dateObj, -1));
-          if (lastWorkedDate[empId] === yesterday && lastShiftType[empId] === SHIFT_TYPES.LATE) return false;
+          if (lastWorkedDate[empId] === yesterday &&
+              (lastShiftType[empId] === SHIFT_TYPES.LATE || lastShiftType[empId] === SHIFT_TYPES.FULL_DAY)) {
+            return false;
+          }
         }
         return true;
       });
@@ -216,12 +220,12 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
       chosenManagers.concat(chosenNonManagers).concat(coveredByManager).forEach(e => {
         const empId = e['EmployeeID'];
         assignments[d.date][shiftType].push(empId);
-        weeklyCount[empId] += 1;
+        weeklyCount[empId] += shiftWeight; // 「1日」は2回分としてカウント
         const yesterday = formatDate_(addDays_(d.dateObj, -1));
         streak[empId] = (lastWorkedDate[empId] === yesterday) ? streak[empId] + 1 : 1;
         lastWorkedDate[empId] = d.date;
         lastShiftType[empId] = shiftType;
-        score += 1; // 割当成功ボーナス
+        score += shiftWeight; // 割当成功ボーナス
       });
     });
   });
@@ -240,7 +244,8 @@ function pseudoRandom_(seed, empId, dateStr, shiftType) {
 }
 
 /**
- * 従業員ごとの早番/遅番/合計 回数を集計する。
+ * 従業員ごとの早番/遅番/1日/合計 回数を集計する。
+ * 「1日」は2回分として合計にカウントする。
  * 0回のシフトの従業員も一覧に含める（割当が偏っていないか確認しやすくするため）。
  */
 function buildEmployeeSummary_(employees, rows) {
@@ -253,6 +258,7 @@ function buildEmployeeSummary_(employees, rows) {
       isManager: isManager_(e),
       early: 0,
       late: 0,
+      fullDay: 0,
       total: 0,
       limit: limit
     };
@@ -260,9 +266,11 @@ function buildEmployeeSummary_(employees, rows) {
   rows.forEach(r => {
     const entry = countMap[r['EmployeeID']];
     if (!entry) return; // 無効化された従業員などは除外
-    if (r['シフト区分'] === SHIFT_TYPES.EARLY) entry.early += 1;
-    if (r['シフト区分'] === SHIFT_TYPES.LATE) entry.late += 1;
-    entry.total += 1;
+    const shiftType = r['シフト区分'];
+    if (shiftType === SHIFT_TYPES.EARLY) entry.early += 1;
+    if (shiftType === SHIFT_TYPES.LATE) entry.late += 1;
+    if (shiftType === SHIFT_TYPES.FULL_DAY) entry.fullDay += 1;
+    entry.total += getShiftWeight_(shiftType);
   });
   return Object.keys(countMap)
     .map(id => {
@@ -277,11 +285,13 @@ function buildGridFromRows_(dayList, rows, staffingRequirements) {
   const requirements = staffingRequirements || getStaffingRequirements();
   const grid = {};
   dayList.forEach(d => {
-    grid[d.date] = {
-      label: d.label,
-      '早番': { people: [], required: requirements[d.label + '_' + SHIFT_TYPES.EARLY] || { manager: 0, nonManager: 0, total: 0 } },
-      '遅番': { people: [], required: requirements[d.label + '_' + SHIFT_TYPES.LATE] || { manager: 0, nonManager: 0, total: 0 } }
-    };
+    grid[d.date] = { label: d.label };
+    ALL_SHIFT_TYPES.forEach(shiftType => {
+      grid[d.date][shiftType] = {
+        people: [],
+        required: requirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0, total: 0 }
+      };
+    });
   });
   rows.forEach(r => {
     if (!grid[r['日付']]) return;
@@ -293,7 +303,7 @@ function buildGridFromRows_(dayList, rows, staffingRequirements) {
   });
   // 実際の人数集計（資格保有者/資格非保有者/合計）を付与
   Object.keys(grid).forEach(date => {
-    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
+    ALL_SHIFT_TYPES.forEach(shiftType => {
       const cell = grid[date][shiftType];
       const managerCount = cell.people.filter(p => p.isManager).length;
       const nonManagerCount = cell.people.length - managerCount;

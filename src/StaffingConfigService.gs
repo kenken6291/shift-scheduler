@@ -44,7 +44,7 @@ function apiGetStaffingConfig() {
   rows.sort((a, b) => {
     const dayDiff = order[a['曜日']] - order[b['曜日']];
     if (dayDiff !== 0) return dayDiff;
-    return a['シフト区分'] === SHIFT_TYPES.EARLY ? -1 : 1;
+    return ALL_SHIFT_TYPES.indexOf(a['シフト区分']) - ALL_SHIFT_TYPES.indexOf(b['シフト区分']);
   });
   return rows;
 }

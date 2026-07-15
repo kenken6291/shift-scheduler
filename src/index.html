@@ -47,7 +47,7 @@
   <section id="tab2" class="tab-panel">
     <div class="card">
       <h2>必要人数設定（曜日×シフトごと）</h2>
-      <p class="hint">早番・遅番それぞれについて、資格保有者と資格非保有者の必要人数を個別に指定できます。</p>
+      <p class="hint">早番・遅番・1日それぞれについて、資格保有者と資格非保有者の必要人数を個別に指定できます（1日は既定0名。必要な週だけ人数を設定してください）。</p>
       <div id="staffingConfigContainer" class="table-container"></div>
       <button id="saveStaffingConfigBtn" class="btn-secondary">設定を保存</button>
       <p id="staffingConfigMsg" class="msg"></p>
@@ -55,7 +55,7 @@
 
     <div class="card">
       <h2>担当者別 出勤回数の上限設定</h2>
-      <p class="hint">空欄の場合は既定値（<span id="defaultLimitLabel">5</span>回/週）が適用されます。</p>
+      <p class="hint">空欄の場合は既定値（<span id="defaultLimitLabel">10</span>回/週。「1日」は2回分としてカウントされます）が適用されます。</p>
       <div id="employeeLimitContainer" class="table-container"></div>
       <button id="saveEmployeeLimitBtn" class="btn-secondary">上限を保存</button>
       <p id="employeeLimitMsg" class="msg"></p>
@@ -71,7 +71,7 @@
 
     <div class="card">
       <h2>担当者別 出勤回数</h2>
-      <p class="hint">★は資格保有者（責任者）を示します。上限を超えている場合は赤字で表示されます。</p>
+      <p class="hint">★は資格保有者（責任者）を示します。「1日」は2回分として合計にカウントされます。上限を超えている場合は赤字で表示されます。</p>
       <div id="employeeSummaryContainer" class="table-container"></div>
     </div>
   </section>

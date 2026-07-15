@@ -28,7 +28,7 @@ function runValidation(weekStartStr) {
   //    資格非保有者の不足は「合計人数」が代替後もなお満たせていない場合のみ違反として扱う。
   const staffingRequirements = getStaffingRequirements();
   dayList.forEach(d => {
-    [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE].forEach(shiftType => {
+    ALL_SHIFT_TYPES.forEach(shiftType => {
       const need = staffingRequirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0 };
       const needTotal = need.manager + need.nonManager;
       const slotRows = rows.filter(r => r['日付'] === d.date && r['シフト区分'] === shiftType);
@@ -46,17 +46,18 @@ function runValidation(weekStartStr) {
     });
   });
 
-  // 2) 週の勤務日数 > 担当者ごとの上限 チェック
+  // 2) 週の勤務回数 > 担当者ごとの上限 チェック（「1日」は2回分としてカウント）
   const countByEmp = {};
   rows.forEach(r => {
-    countByEmp[r['EmployeeID']] = (countByEmp[r['EmployeeID']] || 0) + 1;
+    const weight = getShiftWeight_(r['シフト区分']);
+    countByEmp[r['EmployeeID']] = (countByEmp[r['EmployeeID']] || 0) + weight;
   });
   Object.keys(countByEmp).forEach(empId => {
     const emp = empMap[empId];
     const limit = emp ? getEmployeeWeeklyLimit_(emp) : RULES.MAX_WORK_DAYS_PER_WEEK;
     if (countByEmp[empId] > limit) {
-      violations.push(mkViolation_(weekStartStr, '週勤務日数超過', '', '', empId, emp ? emp['氏名'] : '',
-        `週${countByEmp[empId]}日勤務（上限${limit}日）`, 'エラー'));
+      violations.push(mkViolation_(weekStartStr, '週出勤回数超過', '', '', empId, emp ? emp['氏名'] : '',
+        `週${countByEmp[empId]}回勤務（「1日」は2回分カウント／上限${limit}回）`, 'エラー'));
     }
   });
 
@@ -77,9 +78,10 @@ function runValidation(weekStartStr) {
       const shiftType = todayRows[0]['シフト区分'];
       const yesterday = formatDate_(addDays_(d.dateObj, -1));
 
-      if (shiftType === SHIFT_TYPES.EARLY && lastWorkedDate === yesterday && lastShiftType === SHIFT_TYPES.LATE) {
-        violations.push(mkViolation_(weekStartStr, '遅番→早番違反', d.date, shiftType, empId, emp['氏名'],
-          `${d.label}(${d.date}) 前日が遅番のため早番を配置できません`, 'エラー'));
+      if (shiftType === SHIFT_TYPES.EARLY && lastWorkedDate === yesterday &&
+          (lastShiftType === SHIFT_TYPES.LATE || lastShiftType === SHIFT_TYPES.FULL_DAY)) {
+        violations.push(mkViolation_(weekStartStr, '前日終業後の早番違反', d.date, shiftType, empId, emp['氏名'],
+          `${d.label}(${d.date}) 前日が${lastShiftType}のため早番を配置できません`, 'エラー'));
       }
 
       streak = (lastWorkedDate === yesterday) ? streak + 1 : 1;
