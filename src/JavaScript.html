@@ -1,0 +1,216 @@
+<script>
+  const WEEKDAY_JP = ['月', '火', '水', '木', '金', '土', '日'];
+  const REQUEST_TYPES = ['休み希望', '早番のみ可', '遅番のみ可', '早番希望', '遅番希望', '指定なし'];
+  let currentWeekStart = null;
+  let currentEmployees = [];
+
+  document.addEventListener('DOMContentLoaded', () => {
+    setupTabs();
+    setDefaultWeek();
+    document.getElementById('loadWeekBtn').addEventListener('click', onLoadWeek);
+    document.getElementById('submitRequestBtn').addEventListener('click', onSubmitRequest);
+    document.getElementById('refreshConstraintBtn').addEventListener('click', () => loadConstraintTable(true));
+    document.getElementById('generateShiftBtn').addEventListener('click', onGenerateShift);
+    document.getElementById('confirmShiftBtn').addEventListener('click', onConfirmShift);
+    document.getElementById('runValidationBtn').addEventListener('click', onRunValidation);
+
+    google.script.run.withSuccessHandler(employees => {
+      currentEmployees = employees;
+      renderEmployeeSelect(employees);
+    }).apiGetEmployees();
+  });
+
+  function setupTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab).classList.add('active');
+      });
+    });
+  }
+
+  function setDefaultWeek() {
+    const today = new Date();
+    const day = today.getDay(); // 0=Sun
+    const diffToMonday = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diffToMonday);
+    document.getElementById('weekStartInput').value = formatDateInput(monday);
+    currentWeekStart = formatDateInput(monday);
+  }
+
+  function formatDateInput(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function onLoadWeek() {
+    currentWeekStart = document.getElementById('weekStartInput').value;
+    if (!currentWeekStart) { alert('週の開始日（月曜）を選択してください'); return; }
+    loadConstraintTable(false);
+    loadShiftResult();
+  }
+
+  /* ---------- Step1 ---------- */
+
+  function renderEmployeeSelect(employees) {
+    const sel = document.getElementById('requestEmployeeSelect');
+    sel.innerHTML = employees.map(e => `<option value="${e.EmployeeID}">${e['氏名']}</option>`).join('');
+    renderRequestDaysForm();
+  }
+
+  function renderRequestDaysForm() {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    const container = document.getElementById('requestDaysContainer');
+    const dates = getWeekDates(weekStart);
+    container.innerHTML = dates.map((d, i) => `
+      <div class="request-day-row" data-date="${d}">
+        <span>${WEEKDAY_JP[i]} (${d})</span>
+        <select>
+          ${REQUEST_TYPES.map(t => `<option value="${t}" ${t === '指定なし' ? 'selected' : ''}>${t}</option>`).join('')}
+        </select>
+      </div>
+    `).join('');
+  }
+
+  function getWeekDates(weekStartStr) {
+    const start = new Date(weekStartStr);
+    const arr = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      arr.push(formatDateInput(d));
+    }
+    return arr;
+  }
+
+  function onSubmitRequest() {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    const employeeId = document.getElementById('requestEmployeeSelect').value;
+    const rows = document.querySelectorAll('#requestDaysContainer .request-day-row');
+    const entries = Array.from(rows).map(r => ({
+      date: r.dataset.date,
+      type: r.querySelector('select').value
+    }));
+    const msg = document.getElementById('submitRequestMsg');
+    msg.textContent = '送信中...';
+    google.script.run.withSuccessHandler(res => {
+      msg.textContent = `送信しました（${res.count}件）`;
+      loadConstraintTable(false);
+    }).withFailureHandler(err => { msg.textContent = 'エラー: ' + err.message; })
+      .apiSubmitShiftRequest({ employeeId, weekStart, entries });
+  }
+
+  function loadConstraintTable(forceRefresh) {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    const container = document.getElementById('constraintTableContainer');
+    container.innerHTML = '読み込み中...';
+    google.script.run.withSuccessHandler(data => {
+      renderConstraintTable(data);
+    }).apiGetConstraintTable(weekStart);
+  }
+
+  function renderConstraintTable(data) {
+    const container = document.getElementById('constraintTableContainer');
+    if (!data.rows.length) { container.innerHTML = '<p>データがありません</p>'; return; }
+    let html = '<table><thead><tr><th>氏名</th>';
+    data.days.forEach(d => { html += `<th>${d.label}<br>${d.date}</th>`; });
+    html += '</tr></thead><tbody>';
+    data.rows.forEach(row => {
+      html += `<tr><td>${row['氏名']}</td>`;
+      data.days.forEach(d => { html += `<td>${row[d.label] || ''}</td>`; });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  /* ---------- Step2 ---------- */
+
+  function onGenerateShift() {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    document.getElementById('shiftGridContainer').innerHTML = '生成中...（最大20回試行しています）';
+    google.script.run.withSuccessHandler(data => {
+      renderShiftGrid(data.grid);
+      renderShortfalls(data.shortfalls);
+    }).withFailureHandler(err => {
+      document.getElementById('shiftGridContainer').innerHTML = 'エラー: ' + err.message;
+    }).apiGenerateDraftShift(weekStart);
+  }
+
+  function loadShiftResult() {
+    const weekStart = currentWeekStart;
+    google.script.run.withSuccessHandler(data => {
+      if (data.rowCount > 0) renderShiftGrid(data.grid);
+    }).apiGetShiftResult(weekStart);
+  }
+
+  function renderShortfalls(shortfalls) {
+    const box = document.getElementById('shortfallWarning');
+    if (!shortfalls || shortfalls.length === 0) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    box.textContent = '人数が不足している枠があります:\n' +
+      shortfalls.map(s => `・${s.date} ${s.shiftType}: 必要${s.need}名 / 割当${s.actual}名`).join('\n');
+  }
+
+  function renderShiftGrid(grid) {
+    const container = document.getElementById('shiftGridContainer');
+    const dates = Object.keys(grid);
+    if (dates.length === 0) { container.innerHTML = '<p>データがありません</p>'; return; }
+    let html = '<table><thead><tr><th>区分</th>';
+    dates.forEach(d => { html += `<th>${grid[d].label}<br>${d}</th>`; });
+    html += '</tr></thead><tbody>';
+    ['早番', '遅番'].forEach(shiftType => {
+      html += `<tr><td>${shiftType}</td>`;
+      dates.forEach(d => {
+        const people = grid[d][shiftType] || [];
+        const list = people.map(p => `<div class="shift-person${p.isManager ? ' manager' : ''}">${p.name}</div>`).join('');
+        html += `<td><div class="shift-cell-list">${list || '-'}</div></td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  function onConfirmShift() {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    if (!confirm('このシフトを確定しますか？')) return;
+    google.script.run.withSuccessHandler(() => alert('確定しました')).apiConfirmShift(weekStart);
+  }
+
+  /* ---------- Step3 ---------- */
+
+  function onRunValidation() {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    document.getElementById('violationListContainer').innerHTML = 'チェック中...';
+    google.script.run.withSuccessHandler(renderValidationResult).apiRunValidation(weekStart);
+  }
+
+  function renderValidationResult(data) {
+    const summary = document.getElementById('validationSummary');
+    const listContainer = document.getElementById('violationListContainer');
+    if (data.total === 0) {
+      summary.className = 'summary-box ok';
+      summary.textContent = '違反は検出されませんでした。';
+      listContainer.innerHTML = '';
+      return;
+    }
+    summary.className = 'summary-box';
+    summary.textContent = `エラー ${data.errorCount}件 / 警告 ${data.warningCount}件`;
+
+    let html = '<table><thead><tr><th>深刻度</th><th>種別</th><th>対象日</th><th>シフト</th><th>氏名</th><th>詳細</th></tr></thead><tbody>';
+    data.violations.forEach(v => {
+      html += `<tr class="violation-row severity-${v['深刻度']}">
+        <td>${v['深刻度']}</td><td>${v['違反種別']}</td><td>${v['対象日']}</td>
+        <td>${v['対象シフト']}</td><td>${v['氏名']}</td><td>${v['詳細']}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    listContainer.innerHTML = html;
+  }
+</script>
