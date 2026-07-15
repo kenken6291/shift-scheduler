@@ -114,11 +114,13 @@ function getCarryOverState_(weekStartDate, employees) {
 
 function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, staffingRequirements, trialSeed) {
   const weeklyCount = {};
+  const weeklyLimit = {};
   const streak = {};
   const lastWorkedDate = {};
   const lastShiftType = {};
   employees.forEach(e => {
     weeklyCount[e['EmployeeID']] = 0;
+    weeklyLimit[e['EmployeeID']] = getEmployeeWeeklyLimit_(e);
     const c = carryOverInit[e['EmployeeID']] || { streak: 0, lastShiftType: null, lastWorkedDate: null };
     streak[e['EmployeeID']] = c.streak;
     lastWorkedDate[e['EmployeeID']] = c.lastWorkedDate;
@@ -140,7 +142,7 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
       const baseCandidates = employees.filter(e => {
         const empId = e['EmployeeID'];
         if (alreadyAssignedToday.indexOf(empId) !== -1) return false; // 同日二重割当禁止
-        if (weeklyCount[empId] >= RULES.MAX_WORK_DAYS_PER_WEEK) return false;
+        if (weeklyCount[empId] >= weeklyLimit[empId]) return false;
         if (streak[empId] >= RULES.MAX_CONSECUTIVE_DAYS) return false; // 既に上限連勤
 
         const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
@@ -244,13 +246,15 @@ function pseudoRandom_(seed, empId, dateStr, shiftType) {
 function buildEmployeeSummary_(employees, rows) {
   const countMap = {};
   employees.forEach(e => {
+    const limit = getEmployeeWeeklyLimit_(e);
     countMap[e['EmployeeID']] = {
       employeeId: e['EmployeeID'],
       name: e['氏名'],
       isManager: isManager_(e),
       early: 0,
       late: 0,
-      total: 0
+      total: 0,
+      limit: limit
     };
   });
   rows.forEach(r => {
@@ -261,7 +265,11 @@ function buildEmployeeSummary_(employees, rows) {
     entry.total += 1;
   });
   return Object.keys(countMap)
-    .map(id => countMap[id])
+    .map(id => {
+      const entry = countMap[id];
+      entry.overLimit = entry.total > entry.limit;
+      return entry;
+    })
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'ja'));
 }
 

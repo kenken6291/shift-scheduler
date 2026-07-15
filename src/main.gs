@@ -20,6 +20,7 @@ function include(filename) {
 
 function initializeSpreadsheetStructure() {
   Object.keys(SHEET_NAMES).forEach(key => getOrCreateSheet_(SHEET_NAMES[key]));
+  ensureEmployeeLimitColumn_(); // 従業員マスタに「上限回数」列を保証
   getOrCreateStaffingConfigSheet_(); // 必要人数設定に既定値(資格保有者/非保有者)を投入
   return { success: true };
 }
@@ -29,6 +30,9 @@ function initializeSpreadsheetStructure() {
 function apiGetEmployees() {
   return getActiveEmployees_();
 }
+
+// 担当者別の週出勤回数上限は ConstraintService.gs の
+// apiUpdateEmployeeLimits / apiGetDefaultWeeklyLimit を google.script.run から直接呼び出す。
 
 /* ---------- Step1: 制約表 ---------- */
 

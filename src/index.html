@@ -54,6 +54,14 @@
     </div>
 
     <div class="card">
+      <h2>担当者別 出勤回数の上限設定</h2>
+      <p class="hint">空欄の場合は既定値（<span id="defaultLimitLabel">5</span>回/週）が適用されます。</p>
+      <div id="employeeLimitContainer" class="table-container"></div>
+      <button id="saveEmployeeLimitBtn" class="btn-secondary">上限を保存</button>
+      <p id="employeeLimitMsg" class="msg"></p>
+    </div>
+
+    <div class="card">
       <h2>シフト自動作成</h2>
       <button id="generateShiftBtn" class="btn-primary">この週のシフトを自動生成</button>
       <button id="confirmShiftBtn" class="btn-secondary">このシフトを確定する</button>
@@ -63,7 +71,7 @@
 
     <div class="card">
       <h2>担当者別 出勤回数</h2>
-      <p class="hint">★は資格保有者（責任者）を示します。</p>
+      <p class="hint">★は資格保有者（責任者）を示します。上限を超えている場合は赤字で表示されます。</p>
       <div id="employeeSummaryContainer" class="table-container"></div>
     </div>
   </section>

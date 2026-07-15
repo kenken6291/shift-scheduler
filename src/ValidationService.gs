@@ -46,16 +46,17 @@ function runValidation(weekStartStr) {
     });
   });
 
-  // 2) 週の勤務日数 > 5 チェック
+  // 2) 週の勤務日数 > 担当者ごとの上限 チェック
   const countByEmp = {};
   rows.forEach(r => {
     countByEmp[r['EmployeeID']] = (countByEmp[r['EmployeeID']] || 0) + 1;
   });
   Object.keys(countByEmp).forEach(empId => {
-    if (countByEmp[empId] > RULES.MAX_WORK_DAYS_PER_WEEK) {
-      const emp = empMap[empId];
+    const emp = empMap[empId];
+    const limit = emp ? getEmployeeWeeklyLimit_(emp) : RULES.MAX_WORK_DAYS_PER_WEEK;
+    if (countByEmp[empId] > limit) {
       violations.push(mkViolation_(weekStartStr, '週勤務日数超過', '', '', empId, emp ? emp['氏名'] : '',
-        `週${countByEmp[empId]}日勤務（上限${RULES.MAX_WORK_DAYS_PER_WEEK}日）`, 'エラー'));
+        `週${countByEmp[empId]}日勤務（上限${limit}日）`, 'エラー'));
     }
   });
 

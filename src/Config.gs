@@ -13,7 +13,7 @@ const SHEET_NAMES = {
 };
 
 const SHEET_HEADERS = {
-  EMPLOYEE: ['EmployeeID', '氏名', '資格', 'メールアドレス', '有効'],
+  EMPLOYEE: ['EmployeeID', '氏名', '資格', 'メールアドレス', '有効', '上限回数'],
   REQUEST: ['希望ID', 'EmployeeID', '週開始日', '日付', '希望区分', '備考', '提出日時'],
   CONSTRAINT: ['週開始日', 'EmployeeID', '氏名', '月', '火', '水', '木', '金', '土', '日'],
   RESULT: ['週開始日', '日付', '曜日', 'シフト区分', 'EmployeeID', '氏名', '責任者フラグ', 'ステータス'],
@@ -68,10 +68,19 @@ const REQUEST_TYPE = {
 };
 
 const RULES = {
-  MAX_WORK_DAYS_PER_WEEK: 5,
+  MAX_WORK_DAYS_PER_WEEK: 5, // 「上限回数」列が未設定の従業員に適用する既定値
   MAX_CONSECUTIVE_DAYS: 5,
   GENERATION_TRIALS: 20 // 複数試行してベストなシフトを採用する
 };
+
+/**
+ * 従業員ごとの週の出勤回数上限を返す。
+ * 「従業員マスタ」の「上限回数」列が空/0の場合は RULES.MAX_WORK_DAYS_PER_WEEK を既定値として使う。
+ */
+function getEmployeeWeeklyLimit_(emp) {
+  const raw = Number(emp && emp['上限回数']);
+  return (raw && raw > 0) ? raw : RULES.MAX_WORK_DAYS_PER_WEEK;
+}
 
 /**
  * 対象スプレッドシートを返す。

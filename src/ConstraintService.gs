@@ -7,12 +7,48 @@
  * 従業員一覧（有効な人のみ）を取得
  */
 function getActiveEmployees_() {
+  ensureEmployeeLimitColumn_();
   return sheetToObjects_(SHEET_NAMES.EMPLOYEE).filter(e => e['有効'] === true || e['有効'] === 'TRUE' || e['有効'] === 1);
 }
 
 function isManager_(employee) {
   const v = employee['資格'];
   return v === true || v === 'TRUE' || v === '責任者' || v === 1;
+}
+
+/**
+ * 担当者別の週出勤回数上限を保存する。
+ * payload: [{ employeeId, limit }, ...]  limitが空/0の場合は既定値(RULES.MAX_WORK_DAYS_PER_WEEK)を使う扱いとして空欄で保存する。
+ */
+function apiUpdateEmployeeLimits(payload) {
+  ensureEmployeeLimitColumn_();
+  const sheet = getOrCreateSheet_(SHEET_NAMES.EMPLOYEE);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { success: false, message: '従業員マスタにデータがありません' };
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const idCol = headers.indexOf('EmployeeID') + 1;
+  const limitCol = headers.indexOf('上限回数') + 1;
+  if (idCol === 0 || limitCol === 0) return { success: false, message: '必要な列が見つかりません' };
+
+  const ids = sheet.getRange(2, idCol, lastRow - 1, 1).getValues().map(row => String(row[0]));
+  let updated = 0;
+  payload.forEach(p => {
+    const rowIndex = ids.indexOf(String(p.employeeId));
+    if (rowIndex === -1) return;
+    const limit = Number(p.limit);
+    sheet.getRange(rowIndex + 2, limitCol).setValue(limit > 0 ? limit : '');
+    updated++;
+  });
+  return { success: true, updated: updated };
+}
+
+/**
+ * デフォルトの週出勤回数上限（「上限回数」が空欄の従業員に適用される値）を返す
+ */
+function apiGetDefaultWeeklyLimit() {
+  return RULES.MAX_WORK_DAYS_PER_WEEK;
 }
 
 /**

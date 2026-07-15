@@ -16,6 +16,7 @@
     document.getElementById('runValidationBtn').addEventListener('click', onRunValidation);
     document.getElementById('saveStaffingConfigBtn').addEventListener('click', onSaveStaffingConfig);
     document.getElementById('requestEmployeeSelect').addEventListener('change', renderRequestDaysForm);
+    document.getElementById('saveEmployeeLimitBtn').addEventListener('click', onSaveEmployeeLimits);
 
     google.script.run.withSuccessHandler(employees => {
       currentEmployees = employees;
@@ -23,6 +24,7 @@
     }).apiGetEmployees();
 
     loadStaffingConfig();
+    loadEmployeeLimits();
   });
 
   function setupTabs() {
@@ -209,6 +211,46 @@
       .apiUpdateStaffingConfig(payload);
   }
 
+  /* ---------- Step2: 担当者別 出勤回数の上限設定 ---------- */
+
+  function loadEmployeeLimits() {
+    google.script.run.withSuccessHandler(defaultLimit => {
+      document.getElementById('defaultLimitLabel').textContent = defaultLimit;
+    }).apiGetDefaultWeeklyLimit();
+
+    const container = document.getElementById('employeeLimitContainer');
+    container.innerHTML = '読み込み中...';
+    google.script.run.withSuccessHandler(renderEmployeeLimits).apiGetEmployees();
+  }
+
+  function renderEmployeeLimits(employees) {
+    const container = document.getElementById('employeeLimitContainer');
+    let html = '<table><thead><tr><th>氏名</th><th>週上限回数</th></tr></thead><tbody>';
+    employees.forEach(e => {
+      const limitValue = e['上限回数'] || '';
+      html += `<tr data-employee-id="${e.EmployeeID}">
+        <td>${e['氏名']}</td>
+        <td><input type="number" min="1" class="staffing-input limit-input" placeholder="既定値" value="${limitValue}"></td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  function onSaveEmployeeLimits() {
+    const container = document.getElementById('employeeLimitContainer');
+    const payload = Array.from(container.querySelectorAll('tr[data-employee-id]')).map(tr => ({
+      employeeId: tr.dataset.employeeId,
+      limit: tr.querySelector('.limit-input').value
+    }));
+    const msg = document.getElementById('employeeLimitMsg');
+    msg.textContent = '保存中...';
+    google.script.run.withSuccessHandler(() => {
+      msg.textContent = '保存しました。次回のシフト生成・違反チェックから反映されます。';
+    }).withFailureHandler(err => { msg.textContent = 'エラー: ' + err.message; })
+      .apiUpdateEmployeeLimits(payload);
+  }
+
   /* ---------- Step2: シフト生成 ---------- */
 
   function onGenerateShift() {
@@ -239,10 +281,11 @@
   function renderEmployeeSummary(summary) {
     const container = document.getElementById('employeeSummaryContainer');
     if (!summary || summary.length === 0) { container.innerHTML = '<p>データがありません</p>'; return; }
-    let html = '<table><thead><tr><th>氏名</th><th>早番</th><th>遅番</th><th>合計</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>氏名</th><th>早番</th><th>遅番</th><th>合計</th><th>上限</th></tr></thead><tbody>';
     summary.forEach(s => {
       const nameLabel = s.name + (s.isManager ? ' ★' : '');
-      html += `<tr><td>${nameLabel}</td><td>${s.early}</td><td>${s.late}</td><td><strong>${s.total}</strong></td></tr>`;
+      const totalClass = s.overLimit ? 'count-short' : 'count-ok';
+      html += `<tr><td>${nameLabel}</td><td>${s.early}</td><td>${s.late}</td><td class="${totalClass}"><strong>${s.total}</strong></td><td>${s.limit}</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;

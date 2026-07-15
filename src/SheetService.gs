@@ -45,6 +45,19 @@ function sheetToObjects_(sheetName) {
 }
 
 /**
+ * 「従業員マスタ」シートに「上限回数」列が無い場合、末尾に自動追加する。
+ * (機能追加前に作成済みのスプレッドシートとの互換性のため)
+ */
+function ensureEmployeeLimitColumn_() {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.EMPLOYEE);
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  if (headers.indexOf('上限回数') === -1) {
+    sheet.getRange(1, lastCol + 1).setValue('上限回数');
+  }
+}
+
+/**
  * オブジェクトをヘッダー順に整形して1行追加
  */
 function appendObjectRow_(sheetName, obj) {
