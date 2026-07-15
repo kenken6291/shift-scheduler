@@ -150,6 +150,7 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         if (reqType === REQUEST_TYPE.DAY_OFF) return false;
         if (reqType === REQUEST_TYPE.EARLY_ONLY && shiftType !== SHIFT_TYPES.EARLY) return false;
         if (reqType === REQUEST_TYPE.LATE_ONLY && shiftType !== SHIFT_TYPES.LATE) return false;
+        if (reqType === REQUEST_TYPE.FULLDAY_ONLY && shiftType !== SHIFT_TYPES.FULL_DAY) return false;
 
         // 前日が遅番、または「1日」(通し勤務＝遅番相当で終業)の場合は早番を配置しない
         if (shiftType === SHIFT_TYPES.EARLY) {
@@ -168,6 +169,7 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         let pref = 0;
         if (shiftType === SHIFT_TYPES.EARLY && reqType === REQUEST_TYPE.PREFER_EARLY) pref = 2;
         if (shiftType === SHIFT_TYPES.LATE && reqType === REQUEST_TYPE.PREFER_LATE) pref = 2;
+        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 2;
         const fairness = -weeklyCount[empId]; // 割当が少ないほど高スコア
         const jitter = pseudoRandom_(trialSeed, empId, d.date, shiftType);
         return pref * 10 + fairness + jitter;

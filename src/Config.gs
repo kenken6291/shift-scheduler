@@ -76,11 +76,13 @@ function getDefaultStaffingConfig_() {
 
 // 希望区分の意味
 const REQUEST_TYPE = {
-  DAY_OFF: '休み希望',        // ハード：その日は入れない
-  EARLY_ONLY: '早番のみ可',   // ハード：入れるなら早番のみ
-  LATE_ONLY: '遅番のみ可',    // ハード：入れるなら遅番のみ
-  PREFER_EARLY: '早番希望',   // ソフト：早番を優先
-  PREFER_LATE: '遅番希望',    // ソフト：遅番を優先
+  DAY_OFF: '休み希望',         // ハード：その日は入れない
+  EARLY_ONLY: '早番のみ可',    // ハード：入れるなら早番のみ
+  LATE_ONLY: '遅番のみ可',     // ハード：入れるなら遅番のみ
+  FULLDAY_ONLY: '1日のみ可',   // ハード：入れるなら1日(通し)のみ
+  PREFER_EARLY: '早番希望',    // ソフト：早番を優先
+  PREFER_LATE: '遅番希望',     // ソフト：遅番を優先
+  PREFER_FULLDAY: '1日希望',   // ソフト：1日(通し)を優先
   NONE: '指定なし'
 };
 
