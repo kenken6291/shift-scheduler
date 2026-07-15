@@ -20,10 +20,21 @@
     document.getElementById('saveEmployeeLimitBtn').addEventListener('click', onSaveEmployeeLimits);
     document.getElementById('addManualEntryBtn').addEventListener('click', onAddManualEntry);
 
-    google.script.run.withSuccessHandler(employees => {
-      currentEmployees = employees;
-      renderEmployeeSelect(employees);
-    }).apiGetEmployees();
+    // 提出済みデータがある最新の週を取得し、それを対象週として自動表示する
+    // （無ければ setDefaultWeek() で設定した「今週の月曜」のまま）
+    google.script.run.withSuccessHandler(latestWeek => {
+      if (latestWeek) {
+        currentWeekStart = latestWeek;
+        document.getElementById('weekStartInput').value = latestWeek;
+        document.getElementById('manualEntryDate').value = latestWeek;
+      }
+      google.script.run.withSuccessHandler(employees => {
+        currentEmployees = employees;
+        renderEmployeeSelect(employees); // 内部で提出済み希望のプリフィルも行う
+      }).apiGetEmployees();
+      loadConstraintTable(false);
+      loadShiftResult();
+    }).apiGetLatestRequestWeek();
 
     loadStaffingConfig();
     loadEmployeeLimits();

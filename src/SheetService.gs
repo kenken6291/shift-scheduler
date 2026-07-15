@@ -45,16 +45,31 @@ function sheetToObjects_(sheetName) {
 }
 
 /**
- * 「従業員マスタ」シートに「上限回数」列が無い場合、末尾に自動追加する。
+ * 指定シートに指定の列名が無い場合、末尾に自動追加する汎用ヘルパー。
  * (機能追加前に作成済みのスプレッドシートとの互換性のため)
  */
-function ensureEmployeeLimitColumn_() {
-  const sheet = getOrCreateSheet_(SHEET_NAMES.EMPLOYEE);
+function ensureColumnExists_(sheetName, columnName) {
+  const sheet = getOrCreateSheet_(sheetName);
   const lastCol = sheet.getLastColumn();
   const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-  if (headers.indexOf('上限回数') === -1) {
-    sheet.getRange(1, lastCol + 1).setValue('上限回数');
+  if (headers.indexOf(columnName) === -1) {
+    sheet.getRange(1, lastCol + 1).setValue(columnName);
   }
+}
+
+/**
+ * 「従業員マスタ」シートに「上限回数」列が無い場合、末尾に自動追加する。
+ */
+function ensureEmployeeLimitColumn_() {
+  ensureColumnExists_(SHEET_NAMES.EMPLOYEE, '上限回数');
+}
+
+/**
+ * 「完成シフト」シートに「登録方法」列が無い場合、末尾に自動追加する。
+ * (「自動」＝シフト自動生成による割当、「手動」＝単発の手動追加)
+ */
+function ensureResultRegistrationMethodColumn_() {
+  ensureColumnExists_(SHEET_NAMES.RESULT, '登録方法');
 }
 
 /**
@@ -76,6 +91,31 @@ function appendObjectRows_(sheetName, objects) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const rows = objects.map(obj => headers.map(h => (obj[h] !== undefined ? obj[h] : '')));
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+}
+
+/**
+ * 「完成シフト」シートの指定週のうち、「登録方法」が「手動」以外の行（＝自動生成行、
+ * および機能追加前の空欄行）だけを削除する。手動追加された行は保持する。
+ */
+function clearGeneratedRowsForWeek_(weekStartStr) {
+  ensureResultRegistrationMethodColumn_();
+  const sheet = getOrCreateSheet_(SHEET_NAMES.RESULT);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const weekColIndex = headers.indexOf('週開始日');
+  const methodColIndex = headers.indexOf('登録方法');
+  if (weekColIndex === -1) return;
+  const values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const cellVal = values[i][weekColIndex];
+    const cellStr = cellVal instanceof Date ? formatDate_(cellVal) : String(cellVal);
+    if (cellStr !== weekStartStr) continue;
+    const method = methodColIndex !== -1 ? values[i][methodColIndex] : '';
+    if (method === '手動') continue; // 手動追加行は保持
+    sheet.deleteRow(i + 2);
+  }
 }
 
 /**

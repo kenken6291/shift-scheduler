@@ -4,6 +4,22 @@
  */
 
 /**
+ * 「希望シフト」に提出済みデータがある週のうち、最新の週開始日を返す。
+ * 提出データが1件も無い場合は null を返す。
+ * (希望シフト提出フォームを開いた時に、直近で使われている週を自動表示するため)
+ */
+function getLatestRequestWeek() {
+  const allRequests = sheetToObjects_(SHEET_NAMES.REQUEST);
+  let latest = null;
+  allRequests.forEach(r => {
+    const w = r['週開始日'] instanceof Date ? formatDate_(r['週開始日']) : String(r['週開始日']);
+    if (!w) return;
+    if (!latest || w > latest) latest = w;
+  });
+  return latest;
+}
+
+/**
  * 従業員一覧（有効な人のみ）を取得
  */
 function getActiveEmployees_() {

@@ -21,6 +21,7 @@ function include(filename) {
 function initializeSpreadsheetStructure() {
   Object.keys(SHEET_NAMES).forEach(key => getOrCreateSheet_(SHEET_NAMES[key]));
   ensureEmployeeLimitColumn_(); // 従業員マスタに「上限回数」列を保証
+  ensureResultRegistrationMethodColumn_(); // 完成シフトに「登録方法」列を保証
   getOrCreateStaffingConfigSheet_(); // 必要人数設定に既定値(資格保有者/非保有者)を投入
   return { success: true };
 }
@@ -42,6 +43,10 @@ function apiSubmitShiftRequest(payload) {
 
 function apiGetConstraintTable(weekStartStr) {
   return getWeekConstraintTable(weekStartStr);
+}
+
+function apiGetLatestRequestWeek() {
+  return getLatestRequestWeek();
 }
 
 function apiGetEmployeeRequestsForWeek(employeeId, weekStartStr) {

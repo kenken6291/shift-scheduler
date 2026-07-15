@@ -31,26 +31,44 @@ function generateDraftShift(weekStartStr) {
   const carryOver = getCarryOverState_(weekStartDate, employees);
   const staffingRequirements = getStaffingRequirements(); // { "曜日_シフト区分": {manager, nonManager, total} }
 
+  // 単発で手動追加されたシフト（「シフトの手動追加」機能）を取得し、
+  // 自動生成では「既に確定している割当」として扱う（上書き・重複割当をしない）
+  ensureResultRegistrationMethodColumn_();
+  const manualRows = sheetToObjects_(SHEET_NAMES.RESULT).filter(r => {
+    const w = r['週開始日'] instanceof Date ? formatDate_(r['週開始日']) : String(r['週開始日']);
+    return w === weekStartStr && r['登録方法'] === '手動';
+  });
+  const manualByDate = {};
+  dayList.forEach(d => { manualByDate[d.date] = { '早番': [], '遅番': [], '1日': [] }; });
+  manualRows.forEach(r => {
+    const dateStr = r['日付'] instanceof Date ? formatDate_(r['日付']) : String(r['日付']);
+    if (manualByDate[dateStr] && manualByDate[dateStr][r['シフト区分']]) {
+      manualByDate[dateStr][r['シフト区分']].push(r['EmployeeID']);
+    }
+  });
+
   let best = null;
   for (let trial = 0; trial < RULES.GENERATION_TRIALS; trial++) {
-    const result = runOneTrial_(employees, dayList, requestByEmpAndDate, carryOver, staffingRequirements, trial);
+    const result = runOneTrial_(employees, dayList, requestByEmpAndDate, carryOver, staffingRequirements, manualByDate, trial);
     if (best === null || result.score > best.score) {
       best = result;
     }
   }
 
-  // 完成シフトシートへ書き込み（当該週の既存データは洗い替え）
-  clearRowsForWeek_(SHEET_NAMES.RESULT, weekStartStr);
+  // 完成シフトシートへ書き込み（自動生成行のみ洗い替え。手動追加行は保持）
+  clearGeneratedRowsForWeek_(weekStartStr);
   const empMap = {};
   employees.forEach(e => empMap[e['EmployeeID']] = e);
 
-  const resultRows = [];
+  const autoResultRows = [];
   dayList.forEach(d => {
     ALL_SHIFT_TYPES.forEach(shiftType => {
+      const manualIds = manualByDate[d.date][shiftType] || [];
       const assigned = best.assignments[d.date][shiftType] || [];
-      assigned.forEach(empId => {
+      const autoAssignedIds = assigned.filter(empId => manualIds.indexOf(empId) === -1);
+      autoAssignedIds.forEach(empId => {
         const emp = empMap[empId];
-        resultRows.push({
+        autoResultRows.push({
           '週開始日': weekStartStr,
           '日付': d.date,
           '曜日': d.label,
@@ -58,18 +76,22 @@ function generateDraftShift(weekStartStr) {
           'EmployeeID': empId,
           '氏名': emp ? emp['氏名'] : empId,
           '責任者フラグ': emp && isManager_(emp) ? '○' : '',
-          'ステータス': '初稿'
+          'ステータス': '初稿',
+          '登録方法': '自動'
         });
       });
     });
   });
-  appendObjectRows_(SHEET_NAMES.RESULT, resultRows);
+  appendObjectRows_(SHEET_NAMES.RESULT, autoResultRows);
+
+  // 画面表示用には、保持した手動追加行＋今回の自動生成行の両方を合わせて渡す
+  const allRowsForDisplay = manualRows.concat(autoResultRows);
 
   return {
     weekStart: weekStartStr,
     shortfalls: best.shortfalls,
-    grid: buildGridFromRows_(dayList, resultRows, staffingRequirements),
-    employeeSummary: buildEmployeeSummary_(employees, resultRows)
+    grid: buildGridFromRows_(dayList, allRowsForDisplay, staffingRequirements),
+    employeeSummary: buildEmployeeSummary_(employees, allRowsForDisplay)
   };
 }
 
@@ -112,13 +134,19 @@ function getCarryOverState_(weekStartDate, employees) {
   return state;
 }
 
-function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, staffingRequirements, trialSeed) {
+// シフト種別の処理順序。「1日」を先に確定させることで、
+// 「1日希望」の担当者が早番/遅番に先取りされず、1日枠を優先的に得られるようにする。
+const GENERATION_ORDER = [SHIFT_TYPES.FULL_DAY, SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE];
+
+function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, staffingRequirements, manualByDate, trialSeed) {
   const weeklyCount = {};
   const weeklyLimit = {};
   const streak = {};
   const lastWorkedDate = {};
   const lastShiftType = {};
+  const empById = {};
   employees.forEach(e => {
+    empById[e['EmployeeID']] = e;
     weeklyCount[e['EmployeeID']] = 0;
     weeklyLimit[e['EmployeeID']] = getEmployeeWeeklyLimit_(e);
     const c = carryOverInit[e['EmployeeID']] || { streak: 0, lastShiftType: null, lastWorkedDate: null };
@@ -134,11 +162,32 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
   dayList.forEach(d => {
     assignments[d.date] = { '早番': [], '遅番': [], '1日': [] };
 
-    // 早番→遅番→1日の順で確定させる（遅番/1日の翌日早番禁止ルールに必要な順序）
-    ALL_SHIFT_TYPES.forEach(shiftType => {
+    GENERATION_ORDER.forEach(shiftType => {
       const need = staffingRequirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0 };
       const shiftWeight = getShiftWeight_(shiftType);
+
+      // この日・このシフト区分に手動追加された分を、まず「既に確定した割当」として反映する
+      // （週間カウント・連勤日数・前日区分の起点として使い、自動生成が上書き/重複しないようにする。
+      //  日付順にこの場で反映することで、連勤日数の時系列を壊さないようにしている）
+      const manualIds = (manualByDate[d.date] && manualByDate[d.date][shiftType]) || [];
+      manualIds.forEach(empId => {
+        if (assignments[d.date][shiftType].indexOf(empId) !== -1) return; // 念のため重複防止
+        assignments[d.date][shiftType].push(empId);
+        weeklyCount[empId] = (weeklyCount[empId] || 0) + shiftWeight;
+        const yesterday = formatDate_(addDays_(d.dateObj, -1));
+        streak[empId] = (lastWorkedDate[empId] === yesterday) ? (streak[empId] || 0) + 1 : 1;
+        lastWorkedDate[empId] = d.date;
+        lastShiftType[empId] = shiftType;
+      });
+
       const alreadyAssignedToday = ALL_SHIFT_TYPES.reduce((acc, t) => acc.concat(assignments[d.date][t]), []);
+
+      // 手動追加分は既に確定済みなので、残りの必要人数から差し引く
+      const manualIdsForSlot = assignments[d.date][shiftType]; // この時点では手動追加分のみが入っている
+      const manualManagerCount = manualIdsForSlot.filter(id => empById[id] && isManager_(empById[id])).length;
+      const manualNonManagerCount = manualIdsForSlot.length - manualManagerCount;
+      const remainingManagerNeed = Math.max(0, need.manager - manualManagerCount);
+      const remainingNonManagerNeed = Math.max(0, need.nonManager - manualNonManagerCount);
 
       const baseCandidates = employees.filter(e => {
         const empId = e['EmployeeID'];
@@ -169,7 +218,7 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         let pref = 0;
         if (shiftType === SHIFT_TYPES.EARLY && reqType === REQUEST_TYPE.PREFER_EARLY) pref = 2;
         if (shiftType === SHIFT_TYPES.LATE && reqType === REQUEST_TYPE.PREFER_LATE) pref = 2;
-        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 2;
+        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 5; // 1日希望は優先的に採用
         const fairness = -weeklyCount[empId]; // 割当が少ないほど高スコア
         const jitter = pseudoRandom_(trialSeed, empId, d.date, shiftType);
         return pref * 10 + fairness + jitter;
@@ -179,32 +228,33 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         .sort((a, b) => b.sortScore - a.sortScore)
         .map(x => x.emp);
 
-      // 資格保有者枠・資格非保有者枠を別々に埋める
+      // 資格保有者枠・資格非保有者枠を別々に埋める（手動追加分を差し引いた残り人数分だけ）
       const managerPool = sortByScore(baseCandidates.filter(isManager_));
       const nonManagerPool = sortByScore(baseCandidates.filter(e => !isManager_(e)));
 
-      const chosenManagers = managerPool.slice(0, need.manager);
-      const chosenNonManagers = nonManagerPool.slice(0, need.nonManager);
+      const chosenManagers = managerPool.slice(0, remainingManagerNeed);
+      const chosenNonManagers = nonManagerPool.slice(0, remainingNonManagerNeed);
 
       // 資格非保有者が不足する場合は、資格保有者(枠取り分を除いた余り)で代替可能とする
       // ※ 逆(資格保有者の必要人数を資格非保有者で埋める)は不可
       let coveredByManager = [];
-      const nonManagerGap = need.nonManager - chosenNonManagers.length;
+      const nonManagerGap = remainingNonManagerNeed - chosenNonManagers.length;
       if (nonManagerGap > 0) {
-        const spareManagers = managerPool.slice(need.manager); // 資格保有者枠に使われなかった残り
+        const spareManagers = managerPool.slice(remainingManagerNeed); // 資格保有者枠に使われなかった残り
         coveredByManager = spareManagers.slice(0, nonManagerGap);
       }
 
-      if (chosenManagers.length < need.manager) {
+      const totalManagerCount = manualManagerCount + chosenManagers.length;
+      if (totalManagerCount < need.manager) {
         // 資格保有者の必要人数そのものは資格非保有者で代替できないため、これは実質的な不足
         shortfalls.push({
           date: d.date, shiftType: shiftType, category: '資格保有者',
-          need: need.manager, actual: chosenManagers.length
+          need: need.manager, actual: totalManagerCount
         });
-        score -= (need.manager - chosenManagers.length) * 100;
+        score -= (need.manager - totalManagerCount) * 100;
       }
 
-      const actualTotal = chosenManagers.length + chosenNonManagers.length + coveredByManager.length;
+      const actualTotal = manualIdsForSlot.length + chosenManagers.length + chosenNonManagers.length + coveredByManager.length;
       const needTotal = need.manager + need.nonManager;
       if (actualTotal < needTotal) {
         // 資格保有者での代替を試みてもなお埋まらない、純粋な人数不足
@@ -338,6 +388,7 @@ function addManualShiftEntry(payload) {
   const emp = employees.find(e => String(e['EmployeeID']) === String(payload.employeeId));
   if (!emp) return { success: false, message: '従業員が見つかりません' };
 
+  ensureResultRegistrationMethodColumn_();
   const sheet = getOrCreateSheet_(SHEET_NAMES.RESULT);
   const lastRow = sheet.getLastRow();
   if (lastRow >= 2) {
@@ -361,7 +412,8 @@ function addManualShiftEntry(payload) {
     'EmployeeID': emp['EmployeeID'],
     '氏名': emp['氏名'],
     '責任者フラグ': isManager_(emp) ? '○' : '',
-    'ステータス': '初稿'
+    'ステータス': '初稿',
+    '登録方法': '手動'
   });
 
   return { success: true, weekStart: weekStartStr, date: payload.date, dayLabel: dayLabel };
