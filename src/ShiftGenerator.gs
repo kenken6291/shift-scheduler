@@ -187,8 +187,6 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
       const manualIdsForSlot = assignments[d.date][shiftType]; // この時点では手動追加分のみが入っている
       const manualManagerCount = manualIdsForSlot.filter(id => empById[id] && isManager_(empById[id])).length;
       const manualNonManagerCount = manualIdsForSlot.length - manualManagerCount;
-      const remainingManagerNeed = Math.max(0, need.manager - manualManagerCount);
-      const remainingNonManagerNeed = Math.max(0, need.nonManager - manualNonManagerCount);
 
       const baseCandidates = employees.filter(e => {
         const empId = e['EmployeeID'];
@@ -212,6 +210,24 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         }
         return true;
       });
+
+      // 「1日」は必要人数設定が0でも、「1日のみ可」「1日希望」の希望がある場合は
+      // その人数分だけ必要人数を底上げする（希望を出したのに1日が一切割り当てられない、を防ぐ）
+      let effectiveNeed = need;
+      if (shiftType === SHIFT_TYPES.FULL_DAY) {
+        const fulldayDesireCandidates = baseCandidates.filter(e => {
+          const reqType = requestByEmpAndDate[e['EmployeeID'] + '_' + d.date] || REQUEST_TYPE.NONE;
+          return reqType === REQUEST_TYPE.FULLDAY_ONLY || reqType === REQUEST_TYPE.PREFER_FULLDAY;
+        });
+        const desireManagerCount = fulldayDesireCandidates.filter(isManager_).length;
+        const desireNonManagerCount = fulldayDesireCandidates.length - desireManagerCount;
+        effectiveNeed = {
+          manager: Math.max(need.manager, desireManagerCount),
+          nonManager: Math.max(need.nonManager, desireNonManagerCount)
+        };
+      }
+      const remainingManagerNeed = Math.max(0, effectiveNeed.manager - manualManagerCount);
+      const remainingNonManagerNeed = Math.max(0, effectiveNeed.nonManager - manualNonManagerCount);
 
       const scored = e => {
         const empId = e['EmployeeID'];
