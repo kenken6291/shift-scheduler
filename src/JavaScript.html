@@ -8,6 +8,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     setupTabs();
     setDefaultWeek();
+    document.getElementById('manualEntryDate').value = currentWeekStart;
     document.getElementById('loadWeekBtn').addEventListener('click', onLoadWeek);
     document.getElementById('submitRequestBtn').addEventListener('click', onSubmitRequest);
     document.getElementById('refreshConstraintBtn').addEventListener('click', () => loadConstraintTable(true));
@@ -17,6 +18,7 @@
     document.getElementById('saveStaffingConfigBtn').addEventListener('click', onSaveStaffingConfig);
     document.getElementById('requestEmployeeSelect').addEventListener('change', renderRequestDaysForm);
     document.getElementById('saveEmployeeLimitBtn').addEventListener('click', onSaveEmployeeLimits);
+    document.getElementById('addManualEntryBtn').addEventListener('click', onAddManualEntry);
 
     google.script.run.withSuccessHandler(employees => {
       currentEmployees = employees;
@@ -58,6 +60,7 @@
   function onLoadWeek() {
     currentWeekStart = document.getElementById('weekStartInput').value;
     if (!currentWeekStart) { alert('週の開始日（月曜）を選択してください'); return; }
+    document.getElementById('manualEntryDate').value = currentWeekStart;
     renderRequestDaysForm();
     loadConstraintTable(false);
     loadShiftResult();
@@ -69,6 +72,9 @@
     const sel = document.getElementById('requestEmployeeSelect');
     sel.innerHTML = employees.map(e => `<option value="${e.EmployeeID}">${e['氏名']}</option>`).join('');
     renderRequestDaysForm();
+
+    const manualSel = document.getElementById('manualEntryEmployee');
+    manualSel.innerHTML = employees.map(e => `<option value="${e.EmployeeID}">${e['氏名']}</option>`).join('');
   }
 
   function renderRequestDaysForm() {
@@ -249,6 +255,29 @@
       msg.textContent = '保存しました。次回のシフト生成・違反チェックから反映されます。';
     }).withFailureHandler(err => { msg.textContent = 'エラー: ' + err.message; })
       .apiUpdateEmployeeLimits(payload);
+  }
+
+  /* ---------- Step2: シフトの手動追加（単発） ---------- */
+
+  function onAddManualEntry() {
+    const date = document.getElementById('manualEntryDate').value;
+    const employeeId = document.getElementById('manualEntryEmployee').value;
+    const shiftType = document.getElementById('manualEntryShiftType').value;
+    const msg = document.getElementById('manualEntryMsg');
+
+    if (!date || !employeeId) { msg.textContent = '日付と従業員を指定してください'; return; }
+
+    msg.textContent = '追加中...';
+    google.script.run.withSuccessHandler(res => {
+      if (!res.success) { msg.textContent = 'エラー: ' + (res.message || '追加に失敗しました'); return; }
+      msg.textContent = `追加しました（${res.dayLabel}・${date}）`;
+      if (res.weekStart === currentWeekStart) {
+        loadShiftResult();
+      } else {
+        msg.textContent += ` ※ 週開始日 ${res.weekStart} の週に追加されました。確認するにはその週を読み込んでください。`;
+      }
+    }).withFailureHandler(err => { msg.textContent = 'エラー: ' + err.message; })
+      .apiAddManualShiftEntry({ date, employeeId, shiftType });
   }
 
   /* ---------- Step2: シフト生成 ---------- */

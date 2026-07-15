@@ -313,6 +313,58 @@ function buildGridFromRows_(dayList, rows, staffingRequirements) {
   return grid;
 }
 
+/**
+ * シフトを1件だけ手動で「完成シフト」に追加する（単発の1日勤務などを想定）。
+ * 同一従業員・同一日付の既存行があれば削除してから追加する（重複防止・上書き）。
+ * payload: { date: 'YYYY-MM-DD', employeeId, shiftType }
+ */
+function addManualShiftEntry(payload) {
+  if (ALL_SHIFT_TYPES.indexOf(payload.shiftType) === -1) {
+    return { success: false, message: 'シフト区分が不正です' };
+  }
+
+  const dateObj = new Date(payload.date);
+  if (isNaN(dateObj.getTime())) {
+    return { success: false, message: '日付が不正です' };
+  }
+  const dayIndex = (dateObj.getDay() + 6) % 7; // 月曜=0
+  const weekStartDate = addDays_(dateObj, -dayIndex);
+  const weekStartStr = formatDate_(weekStartDate);
+  const dayLabel = WEEKDAY_JP[dayIndex];
+
+  const employees = getActiveEmployees_();
+  const emp = employees.find(e => String(e['EmployeeID']) === String(payload.employeeId));
+  if (!emp) return { success: false, message: '従業員が見つかりません' };
+
+  const sheet = getOrCreateSheet_(SHEET_NAMES.RESULT);
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const dateCol = headers.indexOf('日付');
+    const empCol = headers.indexOf('EmployeeID');
+    const values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+    for (let i = values.length - 1; i >= 0; i--) {
+      const rowDate = values[i][dateCol] instanceof Date ? formatDate_(values[i][dateCol]) : String(values[i][dateCol]);
+      if (rowDate === payload.date && String(values[i][empCol]) === String(payload.employeeId)) {
+        sheet.deleteRow(i + 2); // 同一従業員・同一日付は上書き（同日の別シフトへの変更にも対応）
+      }
+    }
+  }
+
+  appendObjectRow_(SHEET_NAMES.RESULT, {
+    '週開始日': weekStartStr,
+    '日付': payload.date,
+    '曜日': dayLabel,
+    'シフト区分': payload.shiftType,
+    'EmployeeID': emp['EmployeeID'],
+    '氏名': emp['氏名'],
+    '責任者フラグ': isManager_(emp) ? '○' : '',
+    'ステータス': '初稿'
+  });
+
+  return { success: true, weekStart: weekStartStr, date: payload.date, dayLabel: dayLabel };
+}
+
 function getShiftResult(weekStartStr) {
   const weekStartDate = new Date(weekStartStr);
   const dayList = WEEKDAY_JP.map((wd, i) => ({ label: wd, date: formatDate_(addDays_(weekStartDate, i)) }));

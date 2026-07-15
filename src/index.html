@@ -62,6 +62,27 @@
     </div>
 
     <div class="card">
+      <h2>シフトの手動追加（単発）</h2>
+      <p class="hint">特定の日だけ「1日」勤務を入れたい場合など、1件だけ完成シフトに追加します。同じ従業員・同じ日付の行が既にある場合は上書きされます。</p>
+      <label>日付
+        <input type="date" id="manualEntryDate">
+      </label>
+      <label>従業員
+        <select id="manualEntryEmployee"></select>
+      </label>
+      <label>シフト区分
+        <select id="manualEntryShiftType">
+          <option value="早番">早番</option>
+          <option value="遅番">遅番</option>
+          <option value="1日">1日</option>
+        </select>
+      </label>
+      <button id="addManualEntryBtn" class="btn-primary">追加する</button>
+      <p id="manualEntryMsg" class="msg"></p>
+      <p class="hint">追加後は必ず③違反チェックを実行してください（手動追加は整合性チェックを経由していません）。</p>
+    </div>
+
+    <div class="card">
       <h2>シフト自動作成</h2>
       <button id="generateShiftBtn" class="btn-primary">この週のシフトを自動生成</button>
       <button id="confirmShiftBtn" class="btn-secondary">このシフトを確定する</button>

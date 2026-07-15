@@ -58,6 +58,10 @@ function apiGenerateDraftShift(weekStartStr) {
   return generateDraftShift(weekStartStr);
 }
 
+function apiAddManualShiftEntry(payload) {
+  return addManualShiftEntry(payload);
+}
+
 function apiGetShiftResult(weekStartStr) {
   return getShiftResult(weekStartStr);
 }
