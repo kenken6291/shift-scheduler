@@ -4,6 +4,8 @@
   const REQUEST_TYPE_DEFAULT = '指定なし';
   let currentWeekStart = null;
   let currentEmployees = [];
+  let validationRequestToken = 0;
+  let generateRequestToken = 0;
 
   document.addEventListener('DOMContentLoaded', () => {
     setupTabs();
@@ -13,8 +15,10 @@
     document.getElementById('submitRequestBtn').addEventListener('click', onSubmitRequest);
     document.getElementById('refreshConstraintBtn').addEventListener('click', () => loadConstraintTable(true));
     document.getElementById('generateShiftBtn').addEventListener('click', onGenerateShift);
+    document.getElementById('cancelGenerateBtn').addEventListener('click', onCancelGenerate);
     document.getElementById('confirmShiftBtn').addEventListener('click', onConfirmShift);
     document.getElementById('runValidationBtn').addEventListener('click', onRunValidation);
+    document.getElementById('cancelValidationBtn').addEventListener('click', onCancelValidation);
     document.getElementById('saveStaffingConfigBtn').addEventListener('click', onSaveStaffingConfig);
     document.getElementById('requestEmployeeSelect').addEventListener('change', renderRequestDaysForm);
     document.getElementById('saveEmployeeLimitBtn').addEventListener('click', onSaveEmployeeLimits);
@@ -34,6 +38,7 @@
       }).apiGetEmployees();
       loadConstraintTable(false);
       loadShiftResult();
+      loadManualEntryList();
     }).apiGetLatestRequestWeek();
 
     loadStaffingConfig();
@@ -75,6 +80,7 @@
     renderRequestDaysForm();
     loadConstraintTable(false);
     loadShiftResult();
+    loadManualEntryList();
   }
 
   /* ---------- Step1 ---------- */
@@ -146,9 +152,10 @@
     const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
     const container = document.getElementById('constraintTableContainer');
     container.innerHTML = '読み込み中...';
-    google.script.run.withSuccessHandler(data => {
-      renderConstraintTable(data);
-    }).apiGetConstraintTable(weekStart);
+    google.script.run
+      .withSuccessHandler(renderConstraintTable)
+      .withFailureHandler(err => { container.innerHTML = 'エラー: ' + err.message; })
+      .apiGetConstraintTable(weekStart);
   }
 
   function renderConstraintTable(data) {
@@ -284,6 +291,7 @@
       msg.textContent = `追加しました（${res.dayLabel}・${date}）`;
       if (res.weekStart === currentWeekStart) {
         loadShiftResult();
+        loadManualEntryList();
       } else {
         msg.textContent += ` ※ 週開始日 ${res.weekStart} の週に追加されました。確認するにはその週を読み込んでください。`;
       }
@@ -291,31 +299,144 @@
       .apiAddManualShiftEntry({ date, employeeId, shiftType });
   }
 
+  function loadManualEntryList() {
+    const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    if (!weekStart) return;
+    const container = document.getElementById('manualEntryListContainer');
+    container.innerHTML = '読み込み中...';
+    google.script.run
+      .withSuccessHandler(renderManualEntryList)
+      .withFailureHandler(err => { container.innerHTML = 'エラー: ' + err.message; })
+      .apiGetManualShiftEntries(weekStart);
+  }
+
+  function renderManualEntryList(entries) {
+    const container = document.getElementById('manualEntryListContainer');
+    if (!entries || entries.length === 0) {
+      container.innerHTML = '<p>この週の手動追加はありません</p>';
+      return;
+    }
+    let html = '<table><thead><tr><th>日付</th><th>氏名</th><th>シフト区分</th><th></th><th></th></tr></thead><tbody>';
+    entries.forEach(en => {
+      const nameLabel = en.name + (en.isManager ? ' ★' : '');
+      html += `<tr data-date="${en.date}" data-employee-id="${en.employeeId}">
+        <td>${en.dayLabel} (${en.date})</td>
+        <td>${nameLabel}</td>
+        <td>
+          <select class="manual-entry-shifttype">
+            <option value="早番" ${en.shiftType === '早番' ? 'selected' : ''}>早番</option>
+            <option value="遅番" ${en.shiftType === '遅番' ? 'selected' : ''}>遅番</option>
+            <option value="1日" ${en.shiftType === '1日' ? 'selected' : ''}>1日</option>
+          </select>
+        </td>
+        <td><button type="button" class="btn-secondary manual-entry-save">保存</button></td>
+        <td><button type="button" class="btn-secondary manual-entry-delete">削除</button></td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    container.querySelectorAll('.manual-entry-save').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tr = btn.closest('tr');
+        const date = tr.dataset.date;
+        const employeeId = tr.dataset.employeeId;
+        const shiftType = tr.querySelector('.manual-entry-shifttype').value;
+        btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(res => {
+            btn.disabled = false;
+            if (!res.success) { alert('エラー: ' + (res.message || '保存に失敗しました')); return; }
+            loadManualEntryList();
+            loadShiftResult();
+          })
+          .withFailureHandler(err => { btn.disabled = false; alert('エラー: ' + err.message); })
+          .apiAddManualShiftEntry({ date, employeeId, shiftType });
+      });
+    });
+
+    container.querySelectorAll('.manual-entry-delete').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tr = btn.closest('tr');
+        const date = tr.dataset.date;
+        const employeeId = tr.dataset.employeeId;
+        if (!confirm('この手動追加を削除しますか？')) return;
+        btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(res => {
+            btn.disabled = false;
+            if (!res.success) { alert('エラー: ' + (res.message || '削除に失敗しました')); return; }
+            loadManualEntryList();
+            loadShiftResult();
+          })
+          .withFailureHandler(err => { btn.disabled = false; alert('エラー: ' + err.message); })
+          .apiDeleteManualShiftEntry({ date, employeeId });
+      });
+    });
+  }
+
   /* ---------- Step2: シフト生成 ---------- */
 
   function onGenerateShift() {
     const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    const myToken = ++generateRequestToken;
+
     document.getElementById('shiftGridContainer').innerHTML = '生成中...（最大20回試行しています）';
-    google.script.run.withSuccessHandler(data => {
-      renderShiftGrid(data.grid);
-      renderShortfalls(data.shortfalls);
-      renderEmployeeSummary(data.employeeSummary);
-    }).withFailureHandler(err => {
-      document.getElementById('shiftGridContainer').innerHTML = 'エラー: ' + err.message;
-    }).apiGenerateDraftShift(weekStart);
+    document.getElementById('generateShiftBtn').disabled = true;
+    document.getElementById('cancelGenerateBtn').style.display = 'inline-block';
+
+    const slowTimer = setTimeout(() => {
+      if (myToken !== generateRequestToken) return;
+      document.getElementById('shiftGridContainer').innerHTML =
+        '生成に時間がかかっています…（人数や制約が多いと数十秒かかることがあります。中止する場合は「中止」を押してください）';
+    }, 15000);
+
+    google.script.run
+      .withSuccessHandler(data => {
+        clearTimeout(slowTimer);
+        if (myToken !== generateRequestToken) return;
+        endGenerateRequest_();
+        renderShiftGrid(data.grid);
+        renderShortfalls(data.shortfalls);
+        renderEmployeeSummary(data.employeeSummary);
+      })
+      .withFailureHandler(err => {
+        clearTimeout(slowTimer);
+        if (myToken !== generateRequestToken) return;
+        endGenerateRequest_();
+        document.getElementById('shiftGridContainer').innerHTML = 'エラー: ' + err.message;
+      })
+      .apiGenerateDraftShift(weekStart);
+  }
+
+  function onCancelGenerate() {
+    generateRequestToken++;
+    endGenerateRequest_();
+    document.getElementById('shiftGridContainer').innerHTML =
+      '中止しました。（サーバー側の処理は完了まで続いている場合があります。時間をおいて再度お試しください）';
+  }
+
+  function endGenerateRequest_() {
+    document.getElementById('generateShiftBtn').disabled = false;
+    document.getElementById('cancelGenerateBtn').style.display = 'none';
   }
 
   function loadShiftResult() {
     const weekStart = currentWeekStart;
-    google.script.run.withSuccessHandler(data => {
-      if (data.rowCount > 0) {
-        renderShiftGrid(data.grid);
-        renderEmployeeSummary(data.employeeSummary);
-      } else {
-        document.getElementById('shiftGridContainer').innerHTML = '';
-        document.getElementById('employeeSummaryContainer').innerHTML = '';
-      }
-    }).apiGetShiftResult(weekStart);
+    google.script.run
+      .withSuccessHandler(data => {
+        if (data.rowCount > 0) {
+          renderShiftGrid(data.grid);
+          renderEmployeeSummary(data.employeeSummary);
+        } else {
+          document.getElementById('shiftGridContainer').innerHTML = '';
+          document.getElementById('employeeSummaryContainer').innerHTML = '';
+        }
+      })
+      .withFailureHandler(err => {
+        document.getElementById('shiftGridContainer').innerHTML = 'エラー: ' + err.message;
+      })
+      .apiGetShiftResult(weekStart);
   }
 
   function renderEmployeeSummary(summary) {
@@ -391,8 +512,45 @@
 
   function onRunValidation() {
     const weekStart = currentWeekStart || document.getElementById('weekStartInput').value;
+    const myToken = ++validationRequestToken;
+
     document.getElementById('violationListContainer').innerHTML = 'チェック中...';
-    google.script.run.withSuccessHandler(renderValidationResult).apiRunValidation(weekStart);
+    document.getElementById('validationSummary').innerHTML = '';
+    document.getElementById('runValidationBtn').disabled = true;
+    document.getElementById('cancelValidationBtn').style.display = 'inline-block';
+
+    const slowTimer = setTimeout(() => {
+      if (myToken !== validationRequestToken) return;
+      document.getElementById('violationListContainer').innerHTML =
+        'チェックに時間がかかっています…（データ量によっては数十秒かかることがあります。中止する場合は「中止」を押してください）';
+    }, 15000);
+
+    google.script.run
+      .withSuccessHandler(data => {
+        clearTimeout(slowTimer);
+        if (myToken !== validationRequestToken) return; // 中止済み・別リクエスト後なら無視
+        endValidationRequest_();
+        renderValidationResult(data);
+      })
+      .withFailureHandler(err => {
+        clearTimeout(slowTimer);
+        if (myToken !== validationRequestToken) return;
+        endValidationRequest_();
+        document.getElementById('violationListContainer').innerHTML = 'エラー: ' + err.message;
+      })
+      .apiRunValidation(weekStart);
+  }
+
+  function onCancelValidation() {
+    validationRequestToken++; // 進行中のリクエストの結果を無視する
+    endValidationRequest_();
+    document.getElementById('violationListContainer').innerHTML =
+      '中止しました。（サーバー側の処理は完了まで続いている場合があります。時間をおいて再度チェックしてください）';
+  }
+
+  function endValidationRequest_() {
+    document.getElementById('runValidationBtn').disabled = false;
+    document.getElementById('cancelValidationBtn').style.display = 'none';
   }
 
   function renderValidationResult(data) {

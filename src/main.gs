@@ -67,6 +67,14 @@ function apiAddManualShiftEntry(payload) {
   return addManualShiftEntry(payload);
 }
 
+function apiGetManualShiftEntries(weekStartStr) {
+  return getManualShiftEntries(weekStartStr);
+}
+
+function apiDeleteManualShiftEntry(payload) {
+  return deleteManualShiftEntry(payload);
+}
+
 function apiGetShiftResult(weekStartStr) {
   return getShiftResult(weekStartStr);
 }

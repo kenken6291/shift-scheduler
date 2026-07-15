@@ -80,11 +80,15 @@
       <button id="addManualEntryBtn" class="btn-primary">追加する</button>
       <p id="manualEntryMsg" class="msg"></p>
       <p class="hint">追加後は必ず③違反チェックを実行してください（手動追加は整合性チェックを経由していません）。</p>
+
+      <h3 class="sub-heading">この週の手動追加一覧</h3>
+      <div id="manualEntryListContainer" class="table-container"></div>
     </div>
 
     <div class="card">
       <h2>シフト自動作成</h2>
       <button id="generateShiftBtn" class="btn-primary">この週のシフトを自動生成</button>
+      <button id="cancelGenerateBtn" class="btn-secondary" style="display:none;">中止</button>
       <button id="confirmShiftBtn" class="btn-secondary">このシフトを確定する</button>
       <div id="shortfallWarning" class="warning-box" style="display:none;"></div>
       <div id="shiftGridContainer" class="table-container"></div>
@@ -102,6 +106,7 @@
     <div class="card">
       <h2>違反チェック</h2>
       <button id="runValidationBtn" class="btn-primary">違反を再チェック</button>
+      <button id="cancelValidationBtn" class="btn-secondary" style="display:none;">中止</button>
       <div id="validationSummary" class="summary-box"></div>
       <div id="violationListContainer" class="table-container"></div>
     </div>

@@ -437,6 +437,53 @@ function addManualShiftEntry(payload) {
   return { success: true, weekStart: weekStartStr, date: payload.date, dayLabel: dayLabel };
 }
 
+/**
+ * 指定週の「手動追加」されたシフト一覧を返す（一覧表示・編集・削除用）
+ */
+function getManualShiftEntries(weekStartStr) {
+  ensureResultRegistrationMethodColumn_();
+  const rows = sheetToObjects_(SHEET_NAMES.RESULT).filter(r => {
+    const w = r['週開始日'] instanceof Date ? formatDate_(r['週開始日']) : String(r['週開始日']);
+    return w === weekStartStr && r['登録方法'] === '手動';
+  });
+  return rows.map(r => ({
+    date: r['日付'] instanceof Date ? formatDate_(r['日付']) : String(r['日付']),
+    dayLabel: r['曜日'],
+    employeeId: r['EmployeeID'],
+    name: r['氏名'],
+    shiftType: r['シフト区分'],
+    isManager: r['責任者フラグ'] === '○'
+  })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * 手動追加されたシフトを1件削除する。
+ * payload: { date: 'YYYY-MM-DD', employeeId }
+ */
+function deleteManualShiftEntry(payload) {
+  ensureResultRegistrationMethodColumn_();
+  const sheet = getOrCreateSheet_(SHEET_NAMES.RESULT);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { success: false, message: '対象データがありません' };
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const dateCol = headers.indexOf('日付');
+  const empCol = headers.indexOf('EmployeeID');
+  const methodCol = headers.indexOf('登録方法');
+  const values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+
+  let deleted = false;
+  for (let i = values.length - 1; i >= 0; i--) {
+    const rowDate = values[i][dateCol] instanceof Date ? formatDate_(values[i][dateCol]) : String(values[i][dateCol]);
+    const isManualRow = methodCol !== -1 && values[i][methodCol] === '手動';
+    if (rowDate === payload.date && String(values[i][empCol]) === String(payload.employeeId) && isManualRow) {
+      sheet.deleteRow(i + 2);
+      deleted = true;
+    }
+  }
+  return { success: deleted, message: deleted ? '' : '該当する手動追加データが見つかりません' };
+}
+
 function getShiftResult(weekStartStr) {
   const weekStartDate = new Date(weekStartStr);
   const dayList = WEEKDAY_JP.map((wd, i) => ({ label: wd, date: formatDate_(addDays_(weekStartDate, i)) }));
