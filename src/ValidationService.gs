@@ -61,28 +61,20 @@ function runValidation(weekStartStr) {
     }
   });
 
-  // 3) 連続勤務 > 5日 / 遅番翌日早番 チェック（前週末からの持ち越しも考慮）
+  // 3) 連続勤務 > 5日 チェック（前週末からの持ち越しも考慮）
   const carryOver = getCarryOverState_(weekStartDate, employees);
   employees.forEach(emp => {
     const empId = emp['EmployeeID'];
     let streak = carryOver[empId] ? carryOver[empId].streak : 0;
     let lastWorkedDate = carryOver[empId] ? carryOver[empId].lastWorkedDate : null;
-    let lastShiftType = carryOver[empId] ? carryOver[empId].lastShiftType : null;
 
     dayList.forEach(d => {
       const todayRows = rows.filter(r => r['日付'] === d.date && r['EmployeeID'] === empId);
       if (todayRows.length === 0) {
-        lastWorkedDate = lastWorkedDate; // 出勤なし: streakは翌出勤日判定時にリセットされる
         return;
       }
       const shiftType = todayRows[0]['シフト区分'];
       const yesterday = formatDate_(addDays_(d.dateObj, -1));
-
-      if (shiftType === SHIFT_TYPES.EARLY && lastWorkedDate === yesterday &&
-          (lastShiftType === SHIFT_TYPES.LATE || lastShiftType === SHIFT_TYPES.FULL_DAY)) {
-        violations.push(mkViolation_(weekStartStr, '前日終業後の早番違反', d.date, shiftType, empId, emp['氏名'],
-          `${d.label}(${d.date}) 前日が${lastShiftType}のため早番を配置できません`, 'エラー'));
-      }
 
       streak = (lastWorkedDate === yesterday) ? streak + 1 : 1;
       if (streak > RULES.MAX_CONSECUTIVE_DAYS) {
@@ -90,7 +82,6 @@ function runValidation(weekStartStr) {
           `${d.label}(${d.date})時点で${streak}連勤（上限${RULES.MAX_CONSECUTIVE_DAYS}日）`, 'エラー'));
       }
       lastWorkedDate = d.date;
-      lastShiftType = shiftType;
     });
   });
 

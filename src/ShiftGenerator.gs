@@ -134,8 +134,9 @@ function getCarryOverState_(weekStartDate, employees) {
   return state;
 }
 
-// シフト種別の処理順序。「1日」を先に確定させることで、
-// 「1日希望」の担当者が早番/遅番に先取りされず、1日枠を優先的に得られるようにする。
+// シフト種別の処理順序：1日 → 早番 → 遅番。
+// 「1日」を先に確定させ、その中でも「1日のみ可」を最優先、次に「1日希望」を優先する
+// （スコアリング側のpref値で優先度を表現。詳細はscored()を参照）。
 const GENERATION_ORDER = [SHIFT_TYPES.FULL_DAY, SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE];
 
 function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, staffingRequirements, manualByDate, trialSeed) {
@@ -218,7 +219,8 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
         let pref = 0;
         if (shiftType === SHIFT_TYPES.EARLY && reqType === REQUEST_TYPE.PREFER_EARLY) pref = 2;
         if (shiftType === SHIFT_TYPES.LATE && reqType === REQUEST_TYPE.PREFER_LATE) pref = 2;
-        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 5; // 1日希望は優先的に採用
+        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 5; // 1日希望
+        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.FULLDAY_ONLY) pref = 10; // 1日のみ可を最優先
         const fairness = -weeklyCount[empId]; // 割当が少ないほど高スコア
         const jitter = pseudoRandom_(trialSeed, empId, d.date, shiftType);
         return pref * 10 + fairness + jitter;
