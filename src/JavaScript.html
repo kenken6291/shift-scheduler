@@ -472,7 +472,7 @@
       dates.forEach(d => {
         const cell = grid[d][shiftType] || { people: [], required: { manager: 0, nonManager: 0, total: 0 }, actual: { manager: 0, nonManager: 0, total: 0 } };
         const people = cell.people || [];
-        const list = people.map(p => `<div class="shift-person${p.isManager ? ' manager' : ''}">${p.name}</div>`).join('');
+        const list = people.map(p => `<div class="shift-person${p.isManager ? ' manager' : ''}">${p.name}${p.isFullDay ? '（1日）' : ''}</div>`).join('');
         const req = cell.required || { manager: 0, nonManager: 0, total: 0 };
         const act = cell.actual || { manager: 0, nonManager: 0, total: 0 };
         const mgrClass = act.manager < req.manager ? 'count-short' : 'count-ok';

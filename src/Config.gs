@@ -29,6 +29,11 @@ const SHIFT_TYPES = {
 
 const ALL_SHIFT_TYPES = [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE, SHIFT_TYPES.FULL_DAY];
 
+// 「必要人数設定」で管理者が個別に人数を指定する対象区分。
+// 「1日」は専用の必要人数を持たず、割り当てられると早番・遅番の必要人数を
+// それぞれ1名分ずつ自動的に満たす扱いにするため、ここには含めない。
+const STAFFING_SHIFT_TYPES = [SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE];
+
 const SHIFT_TIME_LABEL = {
   '早番': '9:00〜17:00',
   '遅番': '13:00〜21:00',
@@ -47,21 +52,16 @@ const WEEKDAY_JP = ['月', '火', '水', '木', '金', '土', '日'];
 
 /**
  * 「必要人数設定」シートの既定値（初回のみ自動投入）。
- * 曜日×シフト区分ごとに 資格保有者人数 / 資格非保有者人数 を個別指定する。
- * 従来の「平日3名(責任者1+一般2)・土日4名(責任者1+一般3)」を初期値として踏襲。
+ * 曜日×シフト区分（早番/遅番のみ）ごとに 資格保有者人数 / 資格非保有者人数 を個別指定する。
+ * 「1日」は専用の必要人数を持たない（割り当てられると早番・遅番の必要人数を1名分ずつ満たす扱い）。
  */
 function getDefaultStaffingConfig_() {
   const rows = [];
   WEEKDAY_JP.forEach(day => {
     const weekend = (day === '土' || day === '日');
-    ALL_SHIFT_TYPES.forEach(shiftType => {
-      let manager = 1;
-      let nonManager = weekend ? 3 : 2;
-      if (shiftType === SHIFT_TYPES.FULL_DAY) {
-        // 「1日」は通常運用では任意（必要な週だけ管理者が人数を設定する想定）のため既定0名
-        manager = 0;
-        nonManager = 0;
-      }
+    STAFFING_SHIFT_TYPES.forEach(shiftType => {
+      const manager = 1;
+      const nonManager = weekend ? 3 : 2;
       rows.push({
         '曜日': day,
         'シフト区分': shiftType,

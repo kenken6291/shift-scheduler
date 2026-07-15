@@ -22,16 +22,17 @@ function runValidation(weekStartStr) {
 
   const violations = [];
 
-  // 1) 必要人数チェック（曜日×シフトごと）
+  // 1) 必要人数チェック（曜日×早番/遅番ごと。「1日」勤務者は早番・遅番の両方にカウントする）
   //    資格非保有者の枠は資格保有者で代替してよいため、
   //    「資格保有者不足」＝資格保有者の必要数そのものが満たせていない場合のみ厳格にチェックし、
   //    資格非保有者の不足は「合計人数」が代替後もなお満たせていない場合のみ違反として扱う。
   const staffingRequirements = getStaffingRequirements();
   dayList.forEach(d => {
-    ALL_SHIFT_TYPES.forEach(shiftType => {
+    STAFFING_SHIFT_TYPES.forEach(shiftType => {
       const need = staffingRequirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0 };
       const needTotal = need.manager + need.nonManager;
-      const slotRows = rows.filter(r => r['日付'] === d.date && r['シフト区分'] === shiftType);
+      const slotRows = rows.filter(r => r['日付'] === d.date &&
+        (r['シフト区分'] === shiftType || r['シフト区分'] === SHIFT_TYPES.FULL_DAY));
       const managerCount = slotRows.filter(r => r['責任者フラグ'] === '○').length;
       const totalCount = slotRows.length;
 
@@ -41,7 +42,7 @@ function runValidation(weekStartStr) {
       }
       if (totalCount < needTotal) {
         violations.push(mkViolation_(weekStartStr, '合計人数不足', d.date, shiftType, '', '',
-          `${d.label}(${d.date}) ${shiftType}: 必要合計${needTotal}名（資格保有者による代替を含む）に対し${totalCount}名`, 'エラー'));
+          `${d.label}(${d.date}) ${shiftType}: 必要合計${needTotal}名（資格保有者による代替・1日勤務者を含む）に対し${totalCount}名`, 'エラー'));
       }
     });
   });

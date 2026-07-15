@@ -34,17 +34,19 @@ function getStaffingRequirements() {
 }
 
 /**
- * フロント表示用: 一覧（曜日・シフト区分順）で返す
+ * フロント表示用: 一覧（曜日・シフト区分順）で返す。
+ * 「1日」専用の設定は廃止したため、機能追加前に作成された「1日」行が残っていても除外する。
  */
 function apiGetStaffingConfig() {
   getOrCreateStaffingConfigSheet_();
-  const rows = sheetToObjects_(SHEET_NAMES.STAFFING_CONFIG);
+  const rows = sheetToObjects_(SHEET_NAMES.STAFFING_CONFIG)
+    .filter(r => STAFFING_SHIFT_TYPES.indexOf(r['シフト区分']) !== -1);
   const order = {};
   WEEKDAY_JP.forEach((d, i) => { order[d] = i; });
   rows.sort((a, b) => {
     const dayDiff = order[a['曜日']] - order[b['曜日']];
     if (dayDiff !== 0) return dayDiff;
-    return ALL_SHIFT_TYPES.indexOf(a['シフト区分']) - ALL_SHIFT_TYPES.indexOf(b['シフト区分']);
+    return STAFFING_SHIFT_TYPES.indexOf(a['シフト区分']) - STAFFING_SHIFT_TYPES.indexOf(b['シフト区分']);
   });
   return rows;
 }

@@ -134,9 +134,9 @@ function getCarryOverState_(weekStartDate, employees) {
   return state;
 }
 
-// シフト種別の処理順序：1日 → 早番 → 遅番。
-// 「1日」を先に確定させ、その中でも「1日のみ可」を最優先、次に「1日希望」を優先する
-// （スコアリング側のpref値で優先度を表現。詳細はscored()を参照）。
+// シフト種別の処理順序：1日(ハード)→1日(ソフト)→早番→遅番。
+// 「1日」は専用の必要人数を持たず、割り当てられると早番・遅番双方の
+// 残り必要人数を1名分ずつ自動的に満たす（資格保有者/資格非保有者は区別して減算）。
 const GENERATION_ORDER = [SHIFT_TYPES.FULL_DAY, SHIFT_TYPES.EARLY, SHIFT_TYPES.LATE];
 
 function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, staffingRequirements, manualByDate, trialSeed) {
@@ -163,141 +163,172 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
   dayList.forEach(d => {
     assignments[d.date] = { '早番': [], '遅番': [], '1日': [] };
 
-    GENERATION_ORDER.forEach(shiftType => {
-      const need = staffingRequirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0 };
-      const shiftWeight = getShiftWeight_(shiftType);
+    const earlyNeed = staffingRequirements[d.label + '_' + SHIFT_TYPES.EARLY] || { manager: 0, nonManager: 0 };
+    const lateNeed = staffingRequirements[d.label + '_' + SHIFT_TYPES.LATE] || { manager: 0, nonManager: 0 };
+    // 早番・遅番それぞれの「残り必要人数」。手動追加・1日勤務で満たされるたびに減算していく。
+    let remEarlyMgr = earlyNeed.manager;
+    let remEarlyNonMgr = earlyNeed.nonManager;
+    let remLateMgr = lateNeed.manager;
+    let remLateNonMgr = lateNeed.nonManager;
 
-      // この日・このシフト区分に手動追加された分を、まず「既に確定した割当」として反映する
-      // （週間カウント・連勤日数・前日区分の起点として使い、自動生成が上書き/重複しないようにする。
-      //  日付順にこの場で反映することで、連勤日数の時系列を壊さないようにしている）
+    const alreadyAssignedToday = () => ALL_SHIFT_TYPES.reduce((acc, t) => acc.concat(assignments[d.date][t]), []);
+
+    const isEligible = (e, shiftType) => {
+      const empId = e['EmployeeID'];
+      const weight = getShiftWeight_(shiftType);
+      if (alreadyAssignedToday().indexOf(empId) !== -1) return false; // 同日二重割当禁止（1日勤務との重複も含む）
+      if (weeklyCount[empId] + weight > weeklyLimit[empId]) return false; // 「1日」は2回分として判定
+      if (streak[empId] >= RULES.MAX_CONSECUTIVE_DAYS) return false; // 既に上限連勤
+
+      const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
+      if (reqType === REQUEST_TYPE.DAY_OFF) return false;
+      if (reqType === REQUEST_TYPE.EARLY_ONLY && shiftType !== SHIFT_TYPES.EARLY) return false;
+      if (reqType === REQUEST_TYPE.LATE_ONLY && shiftType !== SHIFT_TYPES.LATE) return false;
+      if (reqType === REQUEST_TYPE.FULLDAY_ONLY && shiftType !== SHIFT_TYPES.FULL_DAY) return false;
+
+      // 前日が遅番、または「1日」(通し勤務＝遅番相当で終業)の場合は早番を配置しない
+      if (shiftType === SHIFT_TYPES.EARLY) {
+        const yesterday = formatDate_(addDays_(d.dateObj, -1));
+        if (lastWorkedDate[empId] === yesterday &&
+            (lastShiftType[empId] === SHIFT_TYPES.LATE || lastShiftType[empId] === SHIFT_TYPES.FULL_DAY)) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const scoreOf = (e, shiftType) => {
+      const empId = e['EmployeeID'];
+      const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
+      let pref = 0;
+      if (shiftType === SHIFT_TYPES.EARLY && reqType === REQUEST_TYPE.PREFER_EARLY) pref = 2;
+      if (shiftType === SHIFT_TYPES.LATE && reqType === REQUEST_TYPE.PREFER_LATE) pref = 2;
+      if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 5; // 1日希望
+      if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.FULLDAY_ONLY) pref = 10; // 1日のみ可を最優先
+      const fairness = -weeklyCount[empId]; // 割当が少ないほど高スコア
+      const jitter = pseudoRandom_(trialSeed, empId, d.date, shiftType);
+      return pref * 10 + fairness + jitter;
+    };
+    const sortByScore = (list, shiftType) => list
+      .map(e => ({ emp: e, sortScore: scoreOf(e, shiftType) }))
+      .sort((a, b) => b.sortScore - a.sortScore)
+      .map(x => x.emp);
+
+    const finalizeAssignment = (e, shiftType) => {
+      const empId = e['EmployeeID'];
+      assignments[d.date][shiftType].push(empId);
+      const weight = getShiftWeight_(shiftType);
+      weeklyCount[empId] += weight;
+      const yesterday = formatDate_(addDays_(d.dateObj, -1));
+      streak[empId] = (lastWorkedDate[empId] === yesterday) ? streak[empId] + 1 : 1;
+      lastWorkedDate[empId] = d.date;
+      lastShiftType[empId] = shiftType;
+      score += weight;
+    };
+
+    // ---- 手動追加分の反映（1日は早番・遅番双方の残り必要人数から1ずつ差し引く） ----
+    GENERATION_ORDER.forEach(shiftType => {
       const manualIds = (manualByDate[d.date] && manualByDate[d.date][shiftType]) || [];
       manualIds.forEach(empId => {
         if (assignments[d.date][shiftType].indexOf(empId) !== -1) return; // 念のため重複防止
+        const emp = empById[empId];
         assignments[d.date][shiftType].push(empId);
-        weeklyCount[empId] = (weeklyCount[empId] || 0) + shiftWeight;
+        const weight = getShiftWeight_(shiftType);
+        weeklyCount[empId] = (weeklyCount[empId] || 0) + weight;
         const yesterday = formatDate_(addDays_(d.dateObj, -1));
         streak[empId] = (lastWorkedDate[empId] === yesterday) ? (streak[empId] || 0) + 1 : 1;
         lastWorkedDate[empId] = d.date;
         lastShiftType[empId] = shiftType;
-      });
 
-      const alreadyAssignedToday = ALL_SHIFT_TYPES.reduce((acc, t) => acc.concat(assignments[d.date][t]), []);
-
-      // 手動追加分は既に確定済みなので、残りの必要人数から差し引く
-      const manualIdsForSlot = assignments[d.date][shiftType]; // この時点では手動追加分のみが入っている
-      const manualManagerCount = manualIdsForSlot.filter(id => empById[id] && isManager_(empById[id])).length;
-      const manualNonManagerCount = manualIdsForSlot.length - manualManagerCount;
-
-      const baseCandidates = employees.filter(e => {
-        const empId = e['EmployeeID'];
-        if (alreadyAssignedToday.indexOf(empId) !== -1) return false; // 同日二重割当禁止（1日勤務との重複も含む）
-        if (weeklyCount[empId] + shiftWeight > weeklyLimit[empId]) return false; // 「1日」は2回分として判定
-        if (streak[empId] >= RULES.MAX_CONSECUTIVE_DAYS) return false; // 既に上限連勤
-
-        const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
-        if (reqType === REQUEST_TYPE.DAY_OFF) return false;
-        if (reqType === REQUEST_TYPE.EARLY_ONLY && shiftType !== SHIFT_TYPES.EARLY) return false;
-        if (reqType === REQUEST_TYPE.LATE_ONLY && shiftType !== SHIFT_TYPES.LATE) return false;
-        if (reqType === REQUEST_TYPE.FULLDAY_ONLY && shiftType !== SHIFT_TYPES.FULL_DAY) return false;
-
-        // 前日が遅番、または「1日」(通し勤務＝遅番相当で終業)の場合は早番を配置しない
-        if (shiftType === SHIFT_TYPES.EARLY) {
-          const yesterday = formatDate_(addDays_(d.dateObj, -1));
-          if (lastWorkedDate[empId] === yesterday &&
-              (lastShiftType[empId] === SHIFT_TYPES.LATE || lastShiftType[empId] === SHIFT_TYPES.FULL_DAY)) {
-            return false;
-          }
+        const mgr = emp && isManager_(emp);
+        if (shiftType === SHIFT_TYPES.FULL_DAY) {
+          if (mgr) { remEarlyMgr = Math.max(0, remEarlyMgr - 1); remLateMgr = Math.max(0, remLateMgr - 1); }
+          else { remEarlyNonMgr = Math.max(0, remEarlyNonMgr - 1); remLateNonMgr = Math.max(0, remLateNonMgr - 1); }
+        } else if (shiftType === SHIFT_TYPES.EARLY) {
+          if (mgr) remEarlyMgr = Math.max(0, remEarlyMgr - 1); else remEarlyNonMgr = Math.max(0, remEarlyNonMgr - 1);
+        } else {
+          if (mgr) remLateMgr = Math.max(0, remLateMgr - 1); else remLateNonMgr = Math.max(0, remLateNonMgr - 1);
         }
-        return true;
       });
+    });
 
-      // 「1日」は必要人数設定が0でも、「1日のみ可」「1日希望」の希望がある場合は
-      // その人数分だけ必要人数を底上げする（希望を出したのに1日が一切割り当てられない、を防ぐ）
-      let effectiveNeed = need;
-      if (shiftType === SHIFT_TYPES.FULL_DAY) {
-        const fulldayDesireCandidates = baseCandidates.filter(e => {
-          const reqType = requestByEmpAndDate[e['EmployeeID'] + '_' + d.date] || REQUEST_TYPE.NONE;
-          return reqType === REQUEST_TYPE.FULLDAY_ONLY || reqType === REQUEST_TYPE.PREFER_FULLDAY;
-        });
-        const desireManagerCount = fulldayDesireCandidates.filter(isManager_).length;
-        const desireNonManagerCount = fulldayDesireCandidates.length - desireManagerCount;
-        effectiveNeed = {
-          manager: Math.max(need.manager, desireManagerCount),
-          nonManager: Math.max(need.nonManager, desireNonManagerCount)
-        };
+    // ---- Step A: 「1日のみ可」(ハード)を最優先で確定。早番・遅番双方の残り必要人数から1ずつ差し引く ----
+    const fulldayHardCandidates = sortByScore(
+      employees.filter(e => isEligible(e, SHIFT_TYPES.FULL_DAY) &&
+        requestByEmpAndDate[e['EmployeeID'] + '_' + d.date] === REQUEST_TYPE.FULLDAY_ONLY),
+      SHIFT_TYPES.FULL_DAY
+    );
+    fulldayHardCandidates.forEach(e => {
+      finalizeAssignment(e, SHIFT_TYPES.FULL_DAY);
+      if (isManager_(e)) { remEarlyMgr = Math.max(0, remEarlyMgr - 1); remLateMgr = Math.max(0, remLateMgr - 1); }
+      else { remEarlyNonMgr = Math.max(0, remEarlyNonMgr - 1); remLateNonMgr = Math.max(0, remLateNonMgr - 1); }
+    });
+
+    // ---- Step B: 「1日希望」(ソフト)を、早番・遅番双方にまだ残り必要人数がある範囲でのみ採用 ----
+    const fulldaySoftCandidates = sortByScore(
+      employees.filter(e => isEligible(e, SHIFT_TYPES.FULL_DAY) &&
+        requestByEmpAndDate[e['EmployeeID'] + '_' + d.date] === REQUEST_TYPE.PREFER_FULLDAY),
+      SHIFT_TYPES.FULL_DAY
+    );
+    fulldaySoftCandidates.forEach(e => {
+      const mgr = isManager_(e);
+      if (mgr && remEarlyMgr > 0 && remLateMgr > 0) {
+        finalizeAssignment(e, SHIFT_TYPES.FULL_DAY);
+        remEarlyMgr -= 1; remLateMgr -= 1;
+      } else if (!mgr && remEarlyNonMgr > 0 && remLateNonMgr > 0) {
+        finalizeAssignment(e, SHIFT_TYPES.FULL_DAY);
+        remEarlyNonMgr -= 1; remLateNonMgr -= 1;
       }
-      const remainingManagerNeed = Math.max(0, effectiveNeed.manager - manualManagerCount);
-      const remainingNonManagerNeed = Math.max(0, effectiveNeed.nonManager - manualNonManagerCount);
+      // 早番・遅番どちらかの残り必要人数が0の場合は、1日ではなく通常のシフト希望として扱われる
+    });
 
-      const scored = e => {
-        const empId = e['EmployeeID'];
-        const reqType = requestByEmpAndDate[empId + '_' + d.date] || REQUEST_TYPE.NONE;
-        let pref = 0;
-        if (shiftType === SHIFT_TYPES.EARLY && reqType === REQUEST_TYPE.PREFER_EARLY) pref = 2;
-        if (shiftType === SHIFT_TYPES.LATE && reqType === REQUEST_TYPE.PREFER_LATE) pref = 2;
-        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.PREFER_FULLDAY) pref = 5; // 1日希望
-        if (shiftType === SHIFT_TYPES.FULL_DAY && reqType === REQUEST_TYPE.FULLDAY_ONLY) pref = 10; // 1日のみ可を最優先
-        const fairness = -weeklyCount[empId]; // 割当が少ないほど高スコア
-        const jitter = pseudoRandom_(trialSeed, empId, d.date, shiftType);
-        return pref * 10 + fairness + jitter;
-      };
-      const sortByScore = list => list
-        .map(e => ({ emp: e, sortScore: scored(e) }))
-        .sort((a, b) => b.sortScore - a.sortScore)
-        .map(x => x.emp);
+    // ---- Step C・D: 早番／遅番それぞれの残り必要人数を通常通り埋める ----
+    const fillNormalShift = (shiftType, needMgr, needNonMgr, originalNeed) => {
+      const candidates = employees.filter(e => isEligible(e, shiftType));
+      const managerPool = sortByScore(candidates.filter(isManager_), shiftType);
+      const nonManagerPool = sortByScore(candidates.filter(e => !isManager_(e)), shiftType);
 
-      // 資格保有者枠・資格非保有者枠を別々に埋める（手動追加分を差し引いた残り人数分だけ）
-      const managerPool = sortByScore(baseCandidates.filter(isManager_));
-      const nonManagerPool = sortByScore(baseCandidates.filter(e => !isManager_(e)));
-
-      const chosenManagers = managerPool.slice(0, remainingManagerNeed);
-      const chosenNonManagers = nonManagerPool.slice(0, remainingNonManagerNeed);
+      const chosenManagers = managerPool.slice(0, needMgr);
+      const chosenNonManagers = nonManagerPool.slice(0, needNonMgr);
 
       // 資格非保有者が不足する場合は、資格保有者(枠取り分を除いた余り)で代替可能とする
-      // ※ 逆(資格保有者の必要人数を資格非保有者で埋める)は不可
       let coveredByManager = [];
-      const nonManagerGap = remainingNonManagerNeed - chosenNonManagers.length;
+      const nonManagerGap = needNonMgr - chosenNonManagers.length;
       if (nonManagerGap > 0) {
-        const spareManagers = managerPool.slice(remainingManagerNeed); // 資格保有者枠に使われなかった残り
+        const spareManagers = managerPool.slice(needMgr);
         coveredByManager = spareManagers.slice(0, nonManagerGap);
       }
 
-      const totalManagerCount = manualManagerCount + chosenManagers.length;
-      if (totalManagerCount < need.manager) {
-        // 資格保有者の必要人数そのものは資格非保有者で代替できないため、これは実質的な不足
+      // 手動追加・1日勤務で既にカバー済みの人数も含めて、元の必要人数と比較する
+      const alreadyCoveredManager = originalNeed.manager - needMgr;
+      const alreadyCoveredNonManager = originalNeed.nonManager - needNonMgr;
+
+      const totalManagerCount = alreadyCoveredManager + chosenManagers.length;
+      if (totalManagerCount < originalNeed.manager) {
         shortfalls.push({
           date: d.date, shiftType: shiftType, category: '資格保有者',
-          need: need.manager, actual: totalManagerCount
+          need: originalNeed.manager, actual: totalManagerCount
         });
-        score -= (need.manager - totalManagerCount) * 100;
+        score -= (originalNeed.manager - totalManagerCount) * 100;
       }
 
-      const actualTotal = manualIdsForSlot.length + chosenManagers.length + chosenNonManagers.length + coveredByManager.length;
-      const needTotal = need.manager + need.nonManager;
+      const actualTotal = alreadyCoveredManager + alreadyCoveredNonManager + chosenManagers.length + chosenNonManagers.length + coveredByManager.length;
+      const needTotal = originalNeed.manager + originalNeed.nonManager;
       if (actualTotal < needTotal) {
-        // 資格保有者での代替を試みてもなお埋まらない、純粋な人数不足
         shortfalls.push({
           date: d.date, shiftType: shiftType, category: '合計人数',
           need: needTotal, actual: actualTotal
         });
         score -= (needTotal - actualTotal) * 100;
       } else if (coveredByManager.length > 0) {
-        // 代替が発生したこと自体は違反ではないが、わずかに減点して
-        // 「本来の資格非保有者が確保できる場合はそちらを優先」する試行を後押しする
         score -= coveredByManager.length * 1;
       }
 
-      chosenManagers.concat(chosenNonManagers).concat(coveredByManager).forEach(e => {
-        const empId = e['EmployeeID'];
-        assignments[d.date][shiftType].push(empId);
-        weeklyCount[empId] += shiftWeight; // 「1日」は2回分としてカウント
-        const yesterday = formatDate_(addDays_(d.dateObj, -1));
-        streak[empId] = (lastWorkedDate[empId] === yesterday) ? streak[empId] + 1 : 1;
-        lastWorkedDate[empId] = d.date;
-        lastShiftType[empId] = shiftType;
-        score += shiftWeight; // 割当成功ボーナス
-      });
-    });
+      chosenManagers.concat(chosenNonManagers).concat(coveredByManager).forEach(e => finalizeAssignment(e, shiftType));
+    };
+
+    fillNormalShift(SHIFT_TYPES.EARLY, remEarlyMgr, remEarlyNonMgr, earlyNeed);
+    fillNormalShift(SHIFT_TYPES.LATE, remLateMgr, remLateNonMgr, lateNeed);
   });
 
   return { assignments, shortfalls, score };
@@ -357,19 +388,30 @@ function buildGridFromRows_(dayList, rows, staffingRequirements) {
   dayList.forEach(d => {
     grid[d.date] = { label: d.label };
     ALL_SHIFT_TYPES.forEach(shiftType => {
-      grid[d.date][shiftType] = {
-        people: [],
-        required: requirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0, total: 0 }
-      };
+      // 「1日」自体は専用の必要人数を持たない
+      const req = STAFFING_SHIFT_TYPES.indexOf(shiftType) !== -1
+        ? (requirements[d.label + '_' + shiftType] || { manager: 0, nonManager: 0, total: 0 })
+        : { manager: 0, nonManager: 0, total: 0 };
+      grid[d.date][shiftType] = { people: [], required: req };
     });
   });
   rows.forEach(r => {
     if (!grid[r['日付']]) return;
-    grid[r['日付']][r['シフト区分']].people.push({
+    const shiftType = r['シフト区分'];
+    const personObj = {
       employeeId: r['EmployeeID'],
       name: r['氏名'],
-      isManager: r['責任者フラグ'] === '○'
-    });
+      isManager: r['責任者フラグ'] === '○',
+      isFullDay: shiftType === SHIFT_TYPES.FULL_DAY
+    };
+    if (shiftType === SHIFT_TYPES.FULL_DAY) {
+      // 「1日」は早番・遅番双方の必要人数を満たすため、両方のセルにも表示する
+      grid[r['日付']][SHIFT_TYPES.EARLY].people.push(personObj);
+      grid[r['日付']][SHIFT_TYPES.LATE].people.push(personObj);
+      grid[r['日付']][SHIFT_TYPES.FULL_DAY].people.push(personObj);
+    } else {
+      grid[r['日付']][shiftType].people.push(personObj);
+    }
   });
   // 実際の人数集計（資格保有者/資格非保有者/合計）を付与
   Object.keys(grid).forEach(date => {
