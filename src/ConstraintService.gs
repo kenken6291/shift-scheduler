@@ -56,6 +56,23 @@ function submitShiftRequest(payload) {
 }
 
 /**
+ * 指定従業員・指定週の提出済み希望を { "日付": "希望区分" } の形で返す。
+ * Webフォームで既存の提出内容をプリフィルするために使用する。
+ */
+function getEmployeeRequestsForWeek(employeeId, weekStartStr) {
+  const allRequests = sheetToObjects_(SHEET_NAMES.REQUEST);
+  const map = {};
+  allRequests.forEach(r => {
+    const w = r['週開始日'] instanceof Date ? formatDate_(r['週開始日']) : String(r['週開始日']);
+    if (w !== weekStartStr) return;
+    if (String(r['EmployeeID']) !== String(employeeId)) return;
+    const dateStr = r['日付'] instanceof Date ? formatDate_(r['日付']) : String(r['日付']);
+    map[dateStr] = r['希望区分'];
+  });
+  return map;
+}
+
+/**
  * 指定週の希望シフト生データを 従業員×曜日 のマトリクスに変換し、
  * 「制約表」シートへ書き出す。フロントの画面表示にもそのまま使う。
  */

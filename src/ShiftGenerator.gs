@@ -68,7 +68,8 @@ function generateDraftShift(weekStartStr) {
   return {
     weekStart: weekStartStr,
     shortfalls: best.shortfalls,
-    grid: buildGridFromRows_(dayList, resultRows, staffingRequirements)
+    grid: buildGridFromRows_(dayList, resultRows, staffingRequirements),
+    employeeSummary: buildEmployeeSummary_(employees, resultRows)
   };
 }
 
@@ -177,22 +178,40 @@ function runOneTrial_(employees, dayList, requestByEmpAndDate, carryOverInit, st
       const chosenManagers = managerPool.slice(0, need.manager);
       const chosenNonManagers = nonManagerPool.slice(0, need.nonManager);
 
+      // 資格非保有者が不足する場合は、資格保有者(枠取り分を除いた余り)で代替可能とする
+      // ※ 逆(資格保有者の必要人数を資格非保有者で埋める)は不可
+      let coveredByManager = [];
+      const nonManagerGap = need.nonManager - chosenNonManagers.length;
+      if (nonManagerGap > 0) {
+        const spareManagers = managerPool.slice(need.manager); // 資格保有者枠に使われなかった残り
+        coveredByManager = spareManagers.slice(0, nonManagerGap);
+      }
+
       if (chosenManagers.length < need.manager) {
+        // 資格保有者の必要人数そのものは資格非保有者で代替できないため、これは実質的な不足
         shortfalls.push({
           date: d.date, shiftType: shiftType, category: '資格保有者',
           need: need.manager, actual: chosenManagers.length
         });
         score -= (need.manager - chosenManagers.length) * 100;
       }
-      if (chosenNonManagers.length < need.nonManager) {
+
+      const actualTotal = chosenManagers.length + chosenNonManagers.length + coveredByManager.length;
+      const needTotal = need.manager + need.nonManager;
+      if (actualTotal < needTotal) {
+        // 資格保有者での代替を試みてもなお埋まらない、純粋な人数不足
         shortfalls.push({
-          date: d.date, shiftType: shiftType, category: '資格非保有者',
-          need: need.nonManager, actual: chosenNonManagers.length
+          date: d.date, shiftType: shiftType, category: '合計人数',
+          need: needTotal, actual: actualTotal
         });
-        score -= (need.nonManager - chosenNonManagers.length) * 100;
+        score -= (needTotal - actualTotal) * 100;
+      } else if (coveredByManager.length > 0) {
+        // 代替が発生したこと自体は違反ではないが、わずかに減点して
+        // 「本来の資格非保有者が確保できる場合はそちらを優先」する試行を後押しする
+        score -= coveredByManager.length * 1;
       }
 
-      chosenManagers.concat(chosenNonManagers).forEach(e => {
+      chosenManagers.concat(chosenNonManagers).concat(coveredByManager).forEach(e => {
         const empId = e['EmployeeID'];
         assignments[d.date][shiftType].push(empId);
         weeklyCount[empId] += 1;
@@ -216,6 +235,34 @@ function pseudoRandom_(seed, empId, dateStr, shiftType) {
     hash = (hash * 31 + str.charCodeAt(i)) % 1000;
   }
   return (hash % 100) / 100; // 0〜1未満のジッター
+}
+
+/**
+ * 従業員ごとの早番/遅番/合計 回数を集計する。
+ * 0回のシフトの従業員も一覧に含める（割当が偏っていないか確認しやすくするため）。
+ */
+function buildEmployeeSummary_(employees, rows) {
+  const countMap = {};
+  employees.forEach(e => {
+    countMap[e['EmployeeID']] = {
+      employeeId: e['EmployeeID'],
+      name: e['氏名'],
+      isManager: isManager_(e),
+      early: 0,
+      late: 0,
+      total: 0
+    };
+  });
+  rows.forEach(r => {
+    const entry = countMap[r['EmployeeID']];
+    if (!entry) return; // 無効化された従業員などは除外
+    if (r['シフト区分'] === SHIFT_TYPES.EARLY) entry.early += 1;
+    if (r['シフト区分'] === SHIFT_TYPES.LATE) entry.late += 1;
+    entry.total += 1;
+  });
+  return Object.keys(countMap)
+    .map(id => countMap[id])
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'ja'));
 }
 
 function buildGridFromRows_(dayList, rows, staffingRequirements) {
@@ -256,7 +303,13 @@ function getShiftResult(weekStartStr) {
     return w === weekStartStr;
   });
   const staffingRequirements = getStaffingRequirements();
-  return { weekStart: weekStartStr, grid: buildGridFromRows_(dayList, rows, staffingRequirements), rowCount: rows.length };
+  const employees = getActiveEmployees_();
+  return {
+    weekStart: weekStartStr,
+    grid: buildGridFromRows_(dayList, rows, staffingRequirements),
+    employeeSummary: buildEmployeeSummary_(employees, rows),
+    rowCount: rows.length
+  };
 }
 
 function confirmShift(weekStartStr) {

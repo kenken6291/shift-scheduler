@@ -36,6 +36,7 @@
 
       <div class="card wide">
         <h2>制約表（集計ビュー）</h2>
+        <p class="hint">★は資格保有者（責任者）を示します。</p>
         <button id="refreshConstraintBtn" class="btn-secondary">再集計</button>
         <div id="constraintTableContainer" class="table-container"></div>
       </div>
@@ -58,6 +59,12 @@
       <button id="confirmShiftBtn" class="btn-secondary">このシフトを確定する</button>
       <div id="shortfallWarning" class="warning-box" style="display:none;"></div>
       <div id="shiftGridContainer" class="table-container"></div>
+    </div>
+
+    <div class="card">
+      <h2>担当者別 出勤回数</h2>
+      <p class="hint">★は資格保有者（責任者）を示します。</p>
+      <div id="employeeSummaryContainer" class="table-container"></div>
     </div>
   </section>
 

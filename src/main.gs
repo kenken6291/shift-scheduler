@@ -40,6 +40,10 @@ function apiGetConstraintTable(weekStartStr) {
   return getWeekConstraintTable(weekStartStr);
 }
 
+function apiGetEmployeeRequestsForWeek(employeeId, weekStartStr) {
+  return getEmployeeRequestsForWeek(employeeId, weekStartStr);
+}
+
 /* ---------- Step2: シフト生成 ---------- */
 
 // 必要人数設定(曜日×シフト区分ごとの資格保有者/資格非保有者人数)は
